@@ -1,5 +1,12 @@
-const cacheName = 'budsync-shell-v5'
-const shellFiles = ['/', '/index.html', '/manifest.webmanifest', '/favicon.svg', '/icon-192.png', '/icon-512.png', '/icon-180.png']
+const cacheName = 'budsync-shell-v6'
+const shellFiles = [
+  '/', '/index.html', '/manifest.webmanifest', '/favicon.svg',
+  '/icon-192.png', '/icon-512.png', '/icon-180.png',
+  '/ocr/worker.min.js', '/ocr/eng.traineddata.gz',
+  '/ocr/tesseract-core-lstm.wasm.js',
+  '/ocr/tesseract-core-simd-lstm.wasm.js',
+  '/ocr/tesseract-core-relaxedsimd-lstm.wasm.js',
+]
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {

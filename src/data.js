@@ -7,7 +7,10 @@ export const starterWallets = [
   { id: 'ewallet', name: 'E-Wallet', type: 'Digital wallet', openingBalance: 0, currency: 'PHP', color: 'orange', archived: false },
 ]
 
-export const blankData = () => ({ version: 2, wallets: starterWallets, entries: [], budgets: [], goals: [], sampleBalances: true })
+export const blankData = () => ({
+  version: 2, wallets: starterWallets.map((wallet) => ({ ...wallet, openingBalance: 0 })),
+  entries: [], budgets: [], goals: [], sampleBalances: false, setupComplete: false,
+})
 
 const validMoney = (amount, allowZero = false) => Number.isFinite(amount)
   && (allowZero ? amount >= 0 : amount > 0)
@@ -81,6 +84,8 @@ export function validateData(input) {
       editNote: typeof entry.editNote === 'string' ? entry.editNote.slice(0, 300) : '',
       deletedAt: typeof entry.deletedAt === 'string' ? entry.deletedAt : null,
       editHistory: Array.isArray(entry.editHistory) ? entry.editHistory.filter((item) => item && typeof item.at === 'string' && typeof item.note === 'string').map((item) => ({ at: item.at, note: item.note.slice(0, 300) })) : [],
+      receiptId: typeof entry.receiptId === 'string' ? entry.receiptId.slice(0, 100) : null,
+      receiptFolderId: typeof entry.receiptFolderId === 'string' ? entry.receiptFolderId.slice(0, 100) : null,
     }
   })
   if (!Array.isArray(input.budgets ?? []) || !Array.isArray(input.goals ?? [])
@@ -110,7 +115,8 @@ export function validateData(input) {
     return { id: goal.id, name: goal.name.trim(), target: goal.target, walletId: goal.walletId }
   })
   if (budgets.length > 100 || goals.length > 100) throw new Error('The backup has too many budgets or savings goals.')
-  return { version: 2, wallets, entries, budgets, goals, sampleBalances: Boolean(input.sampleBalances) }
+  return { version: 2, wallets, entries, budgets, goals,
+    sampleBalances: Boolean(input.sampleBalances), setupComplete: input.setupComplete !== false }
 }
 
 export function parseBackup(text) {

@@ -1,0 +1,55 @@
+.receipt-page { min-width: 0; }
+.receipt-local-note { margin: -8px 0 22px; color: var(--muted); font-size: 12px; }
+.receipt-layout { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 16px; align-items: start; }
+.receipt-folders, .receipt-records { min-width: 0; padding: 24px; }
+.receipt-panel-head, .receipt-add-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
+.receipt-panel-head h2, .receipt-add-row h3 { margin: 0 0 5px; color: var(--ink); font: 700 21px Georgia, 'Times New Roman', serif; }
+.receipt-panel-head p { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+.receipt-panel-head h2 small { color: var(--muted); font: 700 12px 'Courier New', monospace; }
+.receipt-folder-list { display: grid; gap: 7px; margin: 18px 0 23px; }
+.receipt-folder-list button { display: grid; gap: 4px; width: 100%; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-soft); color: var(--ink); text-align: left; }
+.receipt-folder-list button.selected { border-color: var(--ink); box-shadow: inset 3px 0 0 var(--ink); }
+.receipt-folder-list strong { font-size: 12px; }.receipt-folder-list small { color: var(--muted); font-size: 10px; }
+.receipt-empty-copy { margin: 22px 0; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.receipt-folder-form, .receipt-detail-form { display: grid; gap: 12px; margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--line); }
+.receipt-folder-form h3, .receipt-detail-form h3 { margin: 0; color: var(--ink); font: 700 17px Georgia, 'Times New Roman', serif; }
+.receipt-folder-form label, .receipt-detail-form label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.receipt-folder-form input, .receipt-folder-form select, .receipt-folder-form textarea,
+.receipt-detail-form input, .receipt-detail-form textarea { width: 100%; min-width: 0; min-height: 42px; padding: 9px 11px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); color: var(--ink); }
+.receipt-folder-form textarea, .receipt-detail-form textarea { resize: vertical; }
+.receipt-form-actions, .receipt-toolbar, .receipt-capture-actions, .receipt-image-options, .receipt-camera-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.receipt-toolbar .secondary { min-height: 36px; }
+.receipt-summary { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 10px; margin: 23px 0; }
+.receipt-summary > div { min-width: 0; display: grid; gap: 7px; padding: 16px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface-soft); }
+.receipt-summary small { color: var(--muted); font: 700 10px 'Courier New', monospace; text-transform: uppercase; }
+.receipt-summary strong { color: var(--ink); font: 700 clamp(14px, 1.8vw, 20px) 'Courier New', monospace; overflow-wrap: anywhere; }
+.receipt-add-row { align-items: center; padding: 16px 0; border-top: 1px solid var(--line); }
+.receipt-add-row h3 { font-size: 17px; }
+.receipt-items { display: grid; }
+.receipt-item { display: grid; grid-template-columns: 52px minmax(0,1fr) auto; gap: 12px; align-items: center; padding: 13px 0; border-top: 1px solid var(--line); }
+.receipt-item img { width: 52px; height: 65px; object-fit: cover; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); }
+.receipt-no-image { display: grid; place-items: center; width: 52px; height: 65px; border: 1px dashed var(--line); border-radius: 7px; background: var(--surface-soft); color: var(--muted); font: 700 20px Georgia, 'Times New Roman', serif; }
+.receipt-item-main { min-width: 0; display: grid; gap: 4px; }.receipt-item-main strong { color: var(--ink); font-size: 12px; }.receipt-item-main span, .receipt-item-main small { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
+.receipt-item-amount { align-self: start; color: var(--ink); font: 700 13px 'Courier New', monospace; white-space: nowrap; }
+.receipt-item-actions { grid-column: 2 / 4; display: flex; gap: 12px; flex-wrap: wrap; }
+.receipt-item-actions button { min-height: 32px; padding: 0; border: 0; background: transparent; color: var(--ink); font-size: 11px; font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+.receipt-modal { width: min(100%, 740px); }.receipt-scan-body { display: grid; gap: 17px; padding: 0 27px 27px; }
+.receipt-capture-actions label { position: relative; cursor: pointer; }.receipt-capture-actions input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.receipt-camera { display: grid; gap: 10px; }.receipt-camera video { width: 100%; max-height: 330px; object-fit: contain; background: #111; border-radius: 12px; }
+.receipt-preview { position: relative; display: grid; place-items: center; width: fit-content; max-width: 100%; max-height: 350px; margin: 0 auto; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: #222; }
+.receipt-preview img { display: block; max-width: 100%; max-height: 350px; object-fit: contain; }
+.receipt-crop-box { position: absolute; border: 2px solid #fff; box-shadow: 0 0 0 999px rgba(0,0,0,.35), 0 0 0 1px #111; pointer-events: none; }
+.receipt-crop-controls { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 8px 16px; }
+.receipt-crop-controls label { display: grid; gap: 3px; color: var(--muted); font: 700 10px 'Courier New', monospace; text-transform: capitalize; }.receipt-crop-controls input { width: 100%; accent-color: var(--ink); }
+.receipt-image-options label { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); font-size: 11px; }
+.receipt-status { margin: 0; color: var(--muted); font-size: 12px; }
+.receipt-comparison { display: grid; gap: 5px; padding: 13px; border: 1px dashed var(--line); border-radius: 11px; background: var(--surface-soft); color: var(--muted); font-size: 11px; }
+.receipt-comparison strong { color: var(--ink); }
+.receipt-line-items, .receipt-duplicate { display: grid; gap: 7px; padding: 13px; border: 1px solid var(--line); border-radius: 11px; background: var(--surface-soft); color: var(--muted); font-size: 11px; }
+.receipt-line-items > strong, .receipt-duplicate > strong { color: var(--ink); font-size: 12px; }
+.receipt-line-items > div { display: flex; justify-content: space-between; gap: 10px; }.receipt-line-items b { color: var(--ink); font-family: 'Courier New', monospace; }
+.receipt-line-total { padding-top: 8px; border-top: 1px solid var(--line); }.receipt-line-items small { line-height: 1.5; }
+.receipt-duplicate { border-style: dashed; border-color: var(--ink); }.receipt-duplicate p { margin: 0; }.receipt-duplicate label { display: flex; align-items: center; gap: 7px; color: var(--ink); cursor: pointer; }
+.receipt-fields { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; }
+@media (max-width: 900px) { .receipt-layout { grid-template-columns: 1fr; }.receipt-folders, .receipt-records { padding: 18px; } }
+@media (max-width: 600px) { .receipt-summary { grid-template-columns: 1fr 1fr; }.receipt-records .receipt-panel-head, .receipt-add-row { flex-direction: column; }.receipt-folder-list { display: flex; overflow-x: auto; margin: 12px 0 0; padding-bottom: 4px; scroll-snap-type: x proximity; }.receipt-folder-list button { flex: 0 0 min(70vw, 210px); scroll-snap-align: start; }.receipt-fields, .receipt-crop-controls { grid-template-columns: 1fr; }.receipt-modal { max-height: 92dvh; }.receipt-scan-body { padding: 0 18px 24px; } }

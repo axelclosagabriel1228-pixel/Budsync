@@ -11,8 +11,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@tesseract.js-data/eng": "^1.0.0",
+    "firebase": "13.1.0",
     "react": "^19.3.1",
-    "react-dom": "^19.3.1"
+    "react-dom": "^19.3.1",
+    "tesseract.js": "^7.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -23,6 +26,10 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.7",
     "globals": "^17.13.0",
-    "vite": "^8.3.4"
+    "vite": "^8.3.4",
+    "wrangler": "4.152.0"
+  },
+  "overrides": {
+    "@grpc/grpc-js": "1.13.6"
   }
 }

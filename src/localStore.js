@@ -48,6 +48,14 @@ export async function readWorkspace(key) {
   return null
 }
 
+export async function readPreviousAccountWorkspace() {
+  let previous
+  try { previous = JSON.parse(localStorage.getItem('budsync-v3-session')) } catch { return null }
+  if (!previous?.user?.id) return null
+  const saved = await readWorkspace(workspaceKey(previous.user.id))
+  return saved ? { email: previous.user.email || 'previous account', data: saved.data } : null
+}
+
 export const freshWorkspace = () => ({ data: blankData(), revision: 0, dirty: false })
 
 export async function writeWorkspace(key, workspace) {

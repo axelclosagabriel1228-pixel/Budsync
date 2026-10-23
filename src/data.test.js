@@ -2,6 +2,15 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import { backupJson, blankData, parseBackup, transactionsCsv, validateData } from './data.js'
 
+test('new workspaces ask for opening balances while older saved data stays set up', () => {
+  const fresh = blankData()
+  assert.equal(fresh.setupComplete, false)
+  assert.ok(fresh.wallets.every((wallet) => wallet.openingBalance === 0))
+  const older = { ...fresh }
+  delete older.setupComplete
+  assert.equal(validateData(older).setupComplete, true)
+})
+
 test('a V1 record migrates into a restorable V2 backup', () => {
   const old = { ...blankData(), version: 1, entries: [{ id: 'one', type: 'expense', walletId: 'personal', amount: 12.5, date: '2026-10-22', category: 'Food', note: 'Lunch' }] }
   const migrated = validateData(old)

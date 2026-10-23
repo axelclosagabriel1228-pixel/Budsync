@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { backupJson, parseBackup, starterWallets, transactionsCsv } from './data.js'
 import { entryImpact, monthlyReport, walletBalances } from './finance.js'
-import { freshWorkspace, readWorkspace, workspaceKey, writeWorkspace } from './localStore.js'
+import { freshWorkspace, readPreviousAccountWorkspace, readWorkspace, workspaceKey, writeWorkspace } from './localStore.js'
 import { applySnapshot, cloudReady, fetchSnapshot, readSession, signIn, signOut, signUp } from './cloud.js'
 import { changedRecords } from './syncReview.js'
 import { budgetUsage, cashFlowByMonth, monthComparison } from './insights.js'
+import ReceiptPage from './ReceiptPage.jsx'
+import { moveReceiptExpenses, removeReceiptExpenses, upsertReceiptExpense } from './receiptFinance.js'
+import { listReceipts } from './receiptStore.js'
+import { connectGoogleDrive, googleClientId, loadGoogleIdentity } from './googleDrive.js'
+import { restoreFromDrive, syncToDrive } from './googleDriveSync.js'
 import './App.css'
 import './Fluid.css'
 
@@ -12,6 +17,7 @@ const navigation = [
   ['overview', 'Overview'],
   ['transactions', 'Transactions'],
   ['wallets', 'Wallets'],
+  ['receipts', 'Receipts'],
   ['reports', 'Insights'],
   ['account', 'Data & account'],
 ]
@@ -31,6 +37,13 @@ const entryName = (entry) => entry.type === 'transfer' ? 'Transfer' : entry.type
 const validAmount = (value, allowZero = false) => Number.isFinite(Number(value))
   && (allowZero ? Number(value) >= 0 : Number(value) > 0)
   && Math.abs(Number(value) * 100 - Math.round(Number(value) * 100)) < 1e-6
+const newId = () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
 
 function entryForm(type, wallets) {
   return {
@@ -63,6 +76,7 @@ function App() {
   const [authPassword, setAuthPassword] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
   const [pendingGuest, setPendingGuest] = useState(null)
+  const [pendingPrevious, setPendingPrevious] = useState(null)
   const [theme, setTheme] = useState(() => {
     try { return localStorage.getItem('budsync-theme') === 'dark' ? 'dark' : 'light' } catch { return 'light' }
   })
@@ -93,6 +107,12 @@ function App() {
   const [showDeleted, setShowDeleted] = useState(false)
   const [reportMonth, setReportMonth] = useState(localDate().slice(0, 7))
   const [pendingBackup, setPendingBackup] = useState(null)
+  const [driveSession, setDriveSession] = useState(null)
+  const [driveBusy, setDriveBusy] = useState(false)
+  const [driveStatus, setDriveStatus] = useState('')
+  const driveSessionRef = useRef(null)
+  const driveLock = useRef(false)
+  const drivePending = useRef(false)
 
   useEffect(() => {
     workspaceRef.current = workspace
@@ -100,8 +120,12 @@ function App() {
   })
 
   useEffect(() => {
+    if (googleClientId) loadGoogleIdentity().catch(() => {})
+  }, [])
+
+  useEffect(() => {
     document.documentElement.dataset.theme = theme
-    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#10111d' : '#6057f7')
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#111111' : '#ececec')
     try { localStorage.setItem('budsync-theme', theme) } catch { /* Theme stays active for this visit. */ }
   }, [theme])
 
@@ -117,7 +141,8 @@ function App() {
 
   useEffect(() => {
     async function start() {
-      const savedSession = readSession()
+      let savedSession = null
+      try { savedSession = await readSession() } catch (cause) { setSyncError(`Firebase sign-in could not be restored: ${cause.message}`) }
       const nextScope = workspaceKey(savedSession?.user?.id)
       try {
         let local = await readWorkspace(nextScope)
@@ -271,6 +296,9 @@ function App() {
 
   async function openAccount(nextSession) {
     setLoading(true)
+    driveSessionRef.current = null
+    setDriveSession(null)
+    setDriveStatus('')
     try {
       const nextScope = workspaceKey(nextSession.user.id)
       let local = await readWorkspace(nextScope)
@@ -304,6 +332,9 @@ function App() {
 
   async function leaveAccount() {
     setLoading(true)
+    driveSessionRef.current = null
+    setDriveSession(null)
+    setDriveStatus('')
     try { await persistQueue.current } catch { /* Keep the current workspace in memory. */ }
     await signOut()
     setSession(null)
@@ -323,6 +354,14 @@ function App() {
       const guest = await readWorkspace('guest')
       if (!guest) return setNotice('There are no guest records on this device to copy.')
       setPendingGuest(guest.data)
+    } catch (cause) { setError(cause.message) }
+  }
+
+  async function reviewPreviousAccount() {
+    try {
+      const previous = await readPreviousAccountWorkspace()
+      if (!previous) return setNotice('No previous Supabase account copy was found on this device. Import a JSON backup instead.')
+      setPendingPrevious(previous)
     } catch (cause) { setError(cause.message) }
   }
 
@@ -370,7 +409,15 @@ function App() {
               : syncing ? 'Syncing'
                 : workspace.dirty ? 'Pending sync' : 'Synced'
 
-  function openEntry(type = 'expense', existing = null) {
+  async function openEntry(type = 'expense', existing = null) {
+    if (existing?.receiptId) {
+      const localReceipts = await listReceipts(scope).catch(() => [])
+      if (localReceipts.some((receipt) => receipt.id === existing.receiptId)) {
+        setPage('receipts')
+        setNotice('Edit this expense through its receipt folder so the image and wallet record stay together.')
+        return
+      }
+    }
     setForm(existing ? { ...entryForm(existing.type, activeWallets), ...existing, amount: String(existing.amount), editNote: '' } : entryForm(type, activeWallets))
     setError('')
     setModal({ kind: 'entry', id: existing?.id || null })
@@ -398,7 +445,7 @@ function App() {
     const previous = modal.id ? data.entries.find((entry) => entry.id === modal.id) : null
     const timestamp = new Date().toISOString()
     const entry = {
-      id: previous?.id || crypto.randomUUID(),
+      id: previous?.id || newId(),
       type: form.type,
       walletId: form.type === 'transfer' ? null : form.walletId,
       fromWalletId: form.type === 'transfer' ? form.fromWalletId : null,
@@ -413,6 +460,8 @@ function App() {
       editNote: previous ? form.editNote.trim() : '',
       deletedAt: null,
       editHistory: previous ? [...(previous.editHistory || []), { at: timestamp, note: form.editNote.trim() }] : [],
+      receiptId: null,
+      receiptFolderId: null,
     }
     editData((current) => ({ ...current, entries: previous
       ? current.entries.map((item) => item.id === previous.id ? entry : item)
@@ -438,7 +487,7 @@ function App() {
       return {
         ...current,
         wallets: [...current.wallets, {
-          id: crypto.randomUUID(), name, type: 'Custom', openingBalance: Number(walletForm.openingBalance),
+          id: newId(), name, type: 'Custom', openingBalance: Number(walletForm.openingBalance),
           currency: 'PHP', color: ['blue', 'purple', 'teal', 'orange'][current.wallets.length % 4],
           archived: false, updatedAt: null, editNote: '',
         }],
@@ -495,7 +544,7 @@ function App() {
     editData((current) => ({ ...current, sampleBalances: false, wallets: current.wallets.map((wallet) => sampleIds.has(wallet.id) ? { ...wallet, openingBalance: 0 } : wallet) }))
   }
   function addBudget(category, limit) {
-    editData((current) => ({ ...current, budgets: [...(current.budgets || []), { id: crypto.randomUUID(), category, limit }] }))
+    editData((current) => ({ ...current, budgets: [...(current.budgets || []), { id: newId(), category, limit }] }))
     setNotice('Monthly budget added.')
   }
   function removeBudget(id) {
@@ -503,7 +552,7 @@ function App() {
     setNotice('Budget removed.')
   }
   function addGoal(name, target, walletId) {
-    editData((current) => ({ ...current, goals: [...(current.goals || []), { id: crypto.randomUUID(), name, target, walletId }] }))
+    editData((current) => ({ ...current, goals: [...(current.goals || []), { id: newId(), name, target, walletId }] }))
     setNotice('Savings target added.')
   }
   function removeGoal(id) {
@@ -511,13 +560,104 @@ function App() {
     setNotice('Savings target removed.')
   }
 
+  function saveReceiptExpense(receipt, folder) {
+    const timestamp = new Date().toISOString()
+    editData((current) => ({ ...current, entries: upsertReceiptExpense(current.entries, receipt, folder, timestamp) }))
+  }
+
+  function reverseReceiptExpenses(ids) {
+    editData((current) => ({ ...current, entries: removeReceiptExpenses(current.entries, ids, new Date().toISOString()) }))
+  }
+
+  function changeReceiptFolderWallet(ids, walletId, reason) {
+    editData((current) => ({ ...current, entries: moveReceiptExpenses(current.entries, ids, walletId, reason, new Date().toISOString()) }))
+  }
+
+  useEffect(() => {
+    if (!driveSession) return undefined
+    const timer = window.setTimeout(() => { uploadReceipts() }, 300)
+    return () => window.clearTimeout(timer)
+  // Wallet names and assignments are read from the latest workspace during upload.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.wallets, driveSession])
+
+  async function uploadReceipts() {
+    const current = driveSessionRef.current
+    if (!current) return
+    if (driveLock.current) { drivePending.current = true; return }
+    if (Date.now() >= current.expiresAt - 30000) {
+      driveSessionRef.current = null
+      setDriveSession(null)
+      setDriveStatus('Google Drive needs reconnection. Local receipt changes are pending.')
+      return
+    }
+    driveLock.current = true
+    setDriveBusy(true)
+    try {
+      const result = await syncToDrive(current.token, current.scope, workspaceRef.current.data.wallets)
+      setDriveStatus(`Google Drive updated${result.uploaded ? `: ${result.uploaded} files` : ''}.`)
+    } catch (cause) { setDriveStatus(`Drive upload failed: ${cause.message}. Local changes are pending.`) }
+    finally {
+      driveLock.current = false
+      setDriveBusy(false)
+      if (drivePending.current) { drivePending.current = false; uploadReceipts() }
+    }
+  }
+
+  async function connectDrive() {
+    if (driveLock.current) return
+    driveLock.current = true
+    setDriveBusy(true)
+    setDriveStatus('Connecting to Google Drive…')
+    try {
+      const authorization = await connectGoogleDrive()
+      const current = { ...authorization, scope: scopeRef.current }
+      driveSessionRef.current = current
+      setDriveSession(current)
+      setDriveStatus('Connected. Restoring missing receipt folders…')
+      const restored = await restoreFromDrive(current.token, current.scope, workspaceRef.current.data.wallets)
+      if (restored.restored.length) {
+        editData((local) => ({ ...local, entries: restored.restored.reduce((entries, { receipt, folder }) =>
+          entries.some((entry) => entry.id === receipt.entryId) ? entries : upsertReceiptExpense(entries, receipt, folder, receipt.createdAt), local.entries) }))
+      }
+      const uploaded = await syncToDrive(current.token, current.scope, workspaceRef.current.data.wallets)
+      setDriveStatus(`Connected. Restored ${restored.folders} folders and ${restored.receipts} receipts; uploaded ${uploaded.uploaded} files.${restored.skipped ? ` ${restored.skipped} items need matching wallets.` : ''}`)
+    } catch (cause) { setDriveStatus(`Google Drive connection failed: ${cause.message}`) }
+    finally {
+      driveLock.current = false
+      setDriveBusy(false)
+      if (drivePending.current) { drivePending.current = false; uploadReceipts() }
+    }
+  }
+
+  async function restoreDrive() {
+    const current = driveSessionRef.current
+    if (!current || driveLock.current) return
+    if (Date.now() >= current.expiresAt - 30000) {
+      driveSessionRef.current = null
+      setDriveSession(null)
+      return setDriveStatus('Reconnect Google Drive to restore receipts.')
+    }
+    driveLock.current = true
+    setDriveBusy(true)
+    try {
+      const restored = await restoreFromDrive(current.token, current.scope, workspaceRef.current.data.wallets)
+      if (restored.restored.length) editData((local) => ({ ...local, entries: restored.restored.reduce((entries, { receipt, folder }) =>
+        entries.some((entry) => entry.id === receipt.entryId) ? entries : upsertReceiptExpense(entries, receipt, folder, receipt.createdAt), local.entries) }))
+      setDriveStatus(`Restored ${restored.folders} folders and ${restored.receipts} receipts.${restored.skipped ? ` ${restored.skipped} items need matching wallets.` : ''}`)
+    } catch (cause) { setDriveStatus(`Drive restore failed: ${cause.message}`) }
+    finally { driveLock.current = false; setDriveBusy(false) }
+  }
+
   if (loading) return <div className="loading-screen" role="status">Loading your Budsync records…</div>
+
+  if (!data.setupComplete && saveAllowed) return <div className="setup-screen"><section className="setup-card"><span className="widget-kicker">WELCOME TO BUDSYNC</span><h1>Set up your wallets</h1><p>Choose how the four starter wallets should begin. You can edit their opening balances later. This choice does not add any transactions.</p><div className="setup-options"><button type="button" onClick={() => editData((current) => ({ ...current, setupComplete: true, sampleBalances: false }))}><strong>Start at ₱0</strong><span>Use your real opening balances when you are ready.</span></button><button type="button" onClick={() => editData((current) => ({ ...current, wallets: starterWallets.map((wallet) => ({ ...wallet })), setupComplete: true, sampleBalances: true }))}><strong>Explore with sample balances</strong><span>Try Personal ₱1,000, Organization ₱500, and Savings ₱300.</span></button></div></section></div>
 
   return <div className={'app' + (sidebarCollapsed ? ' sidebar-compact' : '')}>
     <a className="skip-link" href="#main-content">Skip to content</a>
     <aside className="sidebar">
       <div className="sidebar-top"><button className="brand" type="button" aria-label="Budsync home" onClick={() => setPage('overview')}><span className="brand-icon">◉</span><span className="brand-word">budsync<span>.</span></span></button><button className="collapse-button" type="button" aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}><NavIcon name="menu" size={19} /></button></div>
-      <div className="mobile-header-actions"><button type="button" aria-label={theme === 'dark' ? 'Use light theme' : 'Use dark theme'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}><NavIcon name={theme === 'dark' ? 'sun' : 'moon'} /></button><button type="button" aria-label="Data and account" onClick={() => setPage('account')}><NavIcon name="account" /></button></div>
+      <div className="mobile-header-actions"><button type="button" aria-label="Insights" onClick={() => setPage('reports')}><NavIcon name="reports" /></button><button type="button" aria-label={theme === 'dark' ? 'Use light theme' : 'Use dark theme'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}><NavIcon name={theme === 'dark' ? 'sun' : 'moon'} /></button><button type="button" aria-label="Data and account" onClick={() => setPage('account')}><NavIcon name="account" /></button></div>
       <div className="side-content">
         <p className="nav-label">WORKSPACE</p>
         <nav aria-label="Desktop navigation">{navigation.map(([id, label]) => <button type="button" key={id} title={label} aria-current={page === id ? 'page' : undefined} className={page === id ? 'active' : ''} onClick={() => setPage(id)}><span className="nav-icon"><NavIcon name={id} /></span><span className="nav-text">{label}</span></button>)}</nav>
@@ -567,17 +707,21 @@ function App() {
 
         {page === 'reports' && <Reports report={report} month={reportMonth} onMonth={setReportMonth} budgets={data.budgets || []} goals={data.goals || []} wallets={data.wallets} balances={balances} onAddBudget={addBudget} onRemoveBudget={removeBudget} onAddGoal={addGoal} onRemoveGoal={removeGoal} />}
 
+        {page === 'receipts' && <ReceiptPage scope={scope} wallets={data.wallets} entries={data.entries} onExpenseSaved={saveReceiptExpense} onExpensesRemoved={reverseReceiptExpenses} onFolderWalletChanged={changeReceiptFolderWallet} onDriveSync={uploadReceipts} driveConnected={Boolean(driveSession)} />}
+
         {page === 'account' && <div className="data-page">
           <div className="page-head"><div><div className="eyebrow">YOUR DATA</div><h1>Data & account</h1><p>Back up your records and manage sync across devices.</p></div></div>
-          <section className="data-card"><h2>Backup & export</h2><p>Download a JSON backup to restore later. CSV is for viewing transactions in a spreadsheet.</p><div className="button-row"><button className="primary" type="button" onClick={() => download('budsync-backup-' + localDate() + '.json', backupJson(data), 'application/json')}>Download backup</button><button className="secondary" type="button" onClick={() => download('budsync-transactions-' + localDate() + '.csv', transactionsCsv(data), 'text/csv;charset=utf-8')}>Export CSV</button></div></section>
+          <section className="data-card"><h2>Google Drive receipts</h2><p>Connect a Google account to upload and restore receipt folders and images. Budsync creates <code>Budsync / wallet name / folder name / files</code> in Drive. Deleted local receipts and folders move to Drive Trash on the next sync. Your local copy remains available while disconnected.</p>{googleClientId ? <div className="button-row"><button className="primary" type="button" disabled={driveBusy || !isOnline} onClick={connectDrive}>{driveSession ? 'Reconnect Google Drive' : 'Connect Google Drive'}</button><button className="secondary" type="button" disabled={driveBusy || !driveSession || !isOnline} onClick={uploadReceipts}>Upload pending</button><button className="secondary" type="button" disabled={driveBusy || !driveSession || !isOnline} onClick={restoreDrive}>Restore missing receipts</button></div> : <p>Add <code>VITE_GOOGLE_CLIENT_ID</code> to <code>.env.local</code> and restart the app. The README has Google Cloud setup steps.</p>}{driveStatus && <p className="sync-state" role="status">{driveStatus}</p>}</section>
+          <section className="data-card"><h2>Backup & export</h2><p>Download a JSON backup to restore wallet records later. Receipt images and folders stay on this device; download individual images from Receipts. CSV is for viewing transactions in a spreadsheet.</p><div className="button-row"><button className="primary" type="button" onClick={() => download('budsync-backup-' + localDate() + '.json', backupJson(data), 'application/json')}>Download backup</button><button className="secondary" type="button" onClick={() => download('budsync-transactions-' + localDate() + '.csv', transactionsCsv(data), 'text/csv;charset=utf-8')}>Export CSV</button></div></section>
           <section className="data-card"><h2>Restore a backup</h2><p>Choose a Budsync JSON backup. Review its contents before replacing this device’s records.</p><label className="import-label">Choose backup file<input type="file" accept=".json,application/json" onChange={chooseBackup} /></label>{error && <p className="form-error" role="alert">{error}</p>}{pendingBackup && <div className="restore-review"><strong>{pendingBackup.name}</strong><span>{pendingBackup.data.wallets.length} wallets · {pendingBackup.data.entries.length} transactions · {pendingBackup.data.budgets.length} budgets · {pendingBackup.data.goals.length} goals</span><p>Restoring replaces wallets, transactions, budgets, and goals on this device. Download your current backup first if you need it.</p><div className="button-row"><button className="primary" type="button" onClick={restoreBackup}>Replace with this backup</button><button className="secondary" type="button" onClick={() => setPendingBackup(null)}>Cancel</button></div></div>}</section>
           <section className="data-card"><h2>Account & sync</h2>{session ? <>
             <p>Signed in as <strong>{session.user.email}</strong>. Changes save on this device first, then sync online. While the app is open, other-device changes appear automatically within a few seconds.</p>
             <p className="sync-state" role="status">{syncStatus}</p>
-            <div className="button-row"><button className="secondary" type="button" disabled={syncing} onClick={() => checkCloud()}>Check for updates</button><button className="secondary" type="button" onClick={reviewGuest}>Copy guest data here</button><button className="secondary" type="button" onClick={leaveAccount}>Sign out</button></div>
+            <div className="button-row"><button className="secondary" type="button" disabled={syncing} onClick={() => checkCloud()}>Check for updates</button><button className="secondary" type="button" onClick={reviewGuest}>Copy guest data here</button><button className="secondary" type="button" onClick={reviewPreviousAccount}>Copy previous account data</button><button className="secondary" type="button" onClick={leaveAccount}>Sign out</button></div>
             {pendingGuest && <div className="restore-review"><strong>Copy guest data into this account?</strong><span>{pendingGuest.wallets.length} wallets · {pendingGuest.entries.length} transactions</span><p>This replaces the account data on this device and queues it for sync. Download a backup of the current account first if you need it.</p><div className="button-row"><button className="primary" type="button" onClick={() => { editData(pendingGuest); setPendingGuest(null); setNotice('Guest records copied into your account and queued for sync.') }}>Copy guest data</button><button className="secondary" type="button" onClick={() => setPendingGuest(null)}>Cancel</button></div></div>}
+            {pendingPrevious && <div className="restore-review"><strong>Copy saved data from {pendingPrevious.email}?</strong><span>{pendingPrevious.data.wallets.length} wallets · {pendingPrevious.data.entries.length} transactions</span><p>This is the last account copy saved on this device. It replaces the current Firebase workspace and uploads on the next sync. Export a backup first if you need the current workspace.</p><div className="button-row"><button className="primary" type="button" onClick={() => { editData(pendingPrevious.data); setPendingPrevious(null); setNotice('Previous account data copied into this Firebase account and queued for sync.') }}>Copy previous data</button><button className="secondary" type="button" onClick={() => setPendingPrevious(null)}>Cancel</button></div></div>}
             {conflict && <div className="restore-review" role="alert"><strong>Choose which copy to keep</strong><span>On this device: {data.wallets.length} wallets · {data.entries.length} transactions<br />In your account: {conflict.data.wallets.length} wallets · {conflict.data.entries.length} transactions</span><ul className="conflict-list">{changedRecords(data, conflict.data).slice(0, 12).map((change, index) => <li key={index}>{change}</li>)}</ul><p>Download a backup of this device before choosing the account copy. Choosing this device will replace the newer account copy.</p><div className="button-row"><button className="secondary" type="button" onClick={() => resolveConflict('cloud')}>Use account copy</button><button className="primary" type="button" onClick={() => resolveConflict('device')}>Upload this device copy</button></div></div>}
-          </> : <><p>Continue as a guest on this device, or sign in to sync your records. Guest records stay separate until you choose to copy them into an account.</p>{cloudReady ? <form className="auth-form" onSubmit={(event) => submitAuth(event, 'signin')}><label>Email<input required type="email" autoComplete="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} /></label><label>Password<input required type="password" minLength="6" autoComplete="current-password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} /></label>{error && <p className="form-error" role="alert">{error}</p>}<div className="button-row"><button className="primary" type="submit" disabled={authBusy}>Sign in</button><button className="secondary" type="button" disabled={authBusy || !authEmail || authPassword.length < 6} onClick={(event) => submitAuth(event, 'signup')}>Create account</button></div></form> : <p>Cloud sync needs a Supabase URL and publishable key in the app configuration.</p>}</>}</section>
+          </> : <><p>Continue as a guest on this device, or sign in to sync your records with Firebase. Guest records stay separate until you choose to copy them into an account. Previous Supabase accounts require a new Firebase sign-up; use a JSON backup or the saved device copy to bring your data over.</p>{cloudReady ? <form className="auth-form" onSubmit={(event) => submitAuth(event, 'signin')}><label>Email<input required type="email" autoComplete="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} /></label><label>Password<input required type="password" minLength="6" autoComplete="current-password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} /></label>{error && <p className="form-error" role="alert">{error}</p>}<div className="button-row"><button className="primary" type="submit" disabled={authBusy}>Sign in</button><button className="secondary" type="button" disabled={authBusy || !authEmail || authPassword.length < 6} onClick={(event) => submitAuth(event, 'signup')}>Create account</button></div></form> : <p>Cloud sync needs the Firebase web app values in <code>.env.local</code>.</p>}</>}</section>
         </div>}
       </main>
     </div>
@@ -585,7 +729,7 @@ function App() {
     <nav className="mobile-dock" aria-label="Mobile navigation">
       {[['overview', 'Home'], ['wallets', 'Wallets']].map(([id, label]) => <button type="button" key={id} className={page === id ? 'active' : ''} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}><NavIcon name={id} /><span>{label}</span></button>)}
       <button className="dock-add" type="button" aria-label="Add transaction" onClick={() => openEntry()}><NavIcon name="plus" size={26} /><span>Add</span></button>
-      {[['transactions', 'Activity'], ['reports', 'Insights']].map(([id, label]) => <button type="button" key={id} className={page === id ? 'active' : ''} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}><NavIcon name={id} /><span>{label}</span></button>)}
+      {[['transactions', 'Activity'], ['receipts', 'Receipts']].map(([id, label]) => <button type="button" key={id} className={page === id ? 'active' : ''} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}><NavIcon name={id} /><span>{label}</span></button>)}
     </nav>
 
     {modal?.kind === 'entry' && <EntryModal form={form} setForm={setForm} error={error} setError={setError} modal={modal} wallets={data.wallets} onClose={() => setModal(null)} onSave={saveEntry} />}
@@ -619,6 +763,7 @@ function NavIcon({ name, size = 20 }) {
     overview: <><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z" /><path d="M9 21v-7h6v7" /></>,
     transactions: <><path d="M4 6h16M4 12h16M4 18h16" /><path d="M7 4v4M17 10v4M10 16v4" /></>,
     wallets: <><rect x="3" y="6" width="18" height="15" rx="3" /><path d="M3 9V6a3 3 0 0 1 3-3h12" /><path d="M16 13h5v4h-5a2 2 0 0 1 0-4z" /></>,
+    receipts: <><path d="M5 3h14v18l-3-2-4 2-4-2-3 2z" /><path d="M8 8h8M8 12h8M8 16h5" /></>,
     reports: <><path d="M4 20V12M10 20V5M16 20v-9M22 20V8" /><path d="M2 20h20" /></>,
     account: <><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></>,
     plus: <path d="M12 5v14M5 12h14" />,
