@@ -19,7 +19,7 @@ Budgets and goals are optional fields in the existing V2 JSON backup and sync sn
 
 ## Receipt folders and scanner
 
-Open **Receipts**, create a folder, and choose the wallet that pays for its expenses. **Add amount** records a manual expense immediately. Edit that record later to attach a receipt image without deducting the amount a second time. **Scan or upload** creates a new expense from an image. Review the detected merchant, date, and amount before saving; OCR suggestions can be corrected. The scanner detects a crop area, with manual crop, rotation, and black-and-white enhancement controls. A folder's optional comparison budget shows remaining or overspent amounts but does not move money.
+Open **Receipts**, create a folder, and choose the wallet that pays for its expenses. **Add amount** records a manual expense immediately. Edit that record later to attach a receipt image without deducting the amount a second time. **Scan or upload** creates a new expense from a photo or image. The image is prepared automatically; use **Read details from image** for OCR suggestions or **Adjust image** to change the crop, rotation, and enhancement. Review the merchant, date, and amount before saving. A folder's optional comparison budget shows remaining or overspent amounts but does not move money.
 
 Receipt images and folder records save in this device's IndexedDB. Deleting a record or folder reverses its linked wallet expenses; editing a folder's wallet moves those expenses to the new wallet. OCR also suggests line items and flags possible duplicate receipts for review. The OCR worker and English model are bundled locally and cached for offline use. Receipt images are not included in JSON backups or account sync. Camera access requires localhost or HTTPS and a browser that supports camera capture.
 
@@ -70,4 +70,4 @@ npm run lint
 npm run build
 ```
 
-Manually check wallet edits, transfers, transaction deletion and restore, budgets, savings targets, receipt capture and upload, OCR review, manual record attachment, folder wallet changes, JSON restore, offline entry and reopening, sign-in on two devices, and conflict choices. Check 320–820 px layouts, light and dark themes, keyboard focus, and reduced motion. Physical Android and iPhone camera testing remains to be done.
+Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the money, receipt, Drive, backup, and two-device checks before each deployment. Physical Android and iPhone camera testing remains to be done.

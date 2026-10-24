@@ -117,12 +117,15 @@ test('a receipt is confirmed only after its metadata and image reach Drive', asy
     listDriveDeletes: async () => [],
     listReceiptFolders: async () => [{ id: 'folder-1', walletId: 'wallet-1', name: 'Food', createdAt: revision }],
     listReceipts: async () => [{ id: 'receipt-1', entryId: 'entry-1', folderId: 'folder-1', merchant: 'Store',
-      amount: 75, date: '2026-10-24', createdAt: revision, blob: new Blob(['image'], { type: 'image/jpeg' }) }],
+      amount: 75, date: '2026-10-24', createdAt: revision, driveSyncedRevision: revision,
+      blob: new Blob(['image'], { type: 'image/jpeg' }) }],
   }
+  let receiptMetadata = ''
   globalThis.fetch = async (value, options) => {
     const url = new URL(value)
     if (url.searchParams.get('uploadType') === 'multipart') {
       const body = await options.body.text()
+      if (body.includes('receipt-1.json')) receiptMetadata = body
       if (failImage && body.includes('receipt-1.jpg')) return Response.json({ error: { message: 'Image upload failed' } }, { status: 500 })
       return Response.json({ id: 'uploaded' })
     }
@@ -141,6 +144,7 @@ test('a receipt is confirmed only after its metadata and image reach Drive', asy
     const saved = await syncToDrive('token', 'guest', [{ id: 'wallet-1', name: 'Personal' }], storage)
     assert.equal(saved.uploaded, 3)
     assert.deepEqual(saved.syncedReceipts, [{ id: 'receipt-1', revision }])
+    assert.doesNotMatch(receiptMetadata, /driveSyncedRevision/)
     failImage = true
     await assert.rejects(syncToDrive('token', 'guest', [{ id: 'wallet-1', name: 'Personal' }], storage), /Image upload failed/)
   } finally { globalThis.fetch = original }

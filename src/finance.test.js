@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { monthlyReport, walletBalances } from './finance.js'
+import { monthlyReport, previewEntryBalances, walletBalances } from './finance.js'
 
 const wallets = [
   { id: 'personal', openingBalance: 1000 },
@@ -38,4 +38,18 @@ test('deleted entries do not affect balances or monthly reports', () => {
   assert.equal(report.expenses, 50)
   assert.equal(report.net, 150)
   assert.deepEqual(report.categories, [['Food', 50]])
+})
+
+test('entry preview shows both transfer wallets and the true impact of an edit', () => {
+  const previous = { type: 'expense', walletId: 'personal', amount: 50 }
+  const balances = walletBalances(wallets, [previous])
+  const transfer = previewEntryBalances(wallets, balances,
+    { type: 'transfer', fromWalletId: 'personal', toWalletId: 'savings', amount: '100' }, previous)
+  assert.deepEqual(transfer.changes.map(({ id, after }) => [id, after]), [['personal', 900], ['savings', 400]])
+  assert.equal(transfer.combinedDelta, 50)
+  const newTransfer = previewEntryBalances(wallets, balances,
+    { type: 'transfer', fromWalletId: 'personal', toWalletId: 'savings', amount: '100' })
+  assert.equal(newTransfer.combinedDelta, 0)
+  assert.equal(previewEntryBalances(wallets, balances,
+    { type: 'transfer', fromWalletId: 'personal', toWalletId: 'personal', amount: '100' }), null)
 })

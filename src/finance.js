@@ -18,6 +18,20 @@ export function walletBalances(wallets, entries) {
   ]))
 }
 
+export function previewEntryBalances(wallets, balances, draft, previous = null) {
+  const amount = Number(draft.amount)
+  if (!Number.isFinite(amount) || amount <= 0) return null
+  const ids = new Set(wallets.map((wallet) => wallet.id))
+  if (draft.type === 'transfer' ? !ids.has(draft.fromWalletId) || !ids.has(draft.toWalletId) || draft.fromWalletId === draft.toWalletId : !ids.has(draft.walletId)) return null
+  const next = { ...draft, amount, deletedAt: null }
+  const changes = wallets.map((wallet) => {
+    const before = balances[wallet.id]
+    const delta = entryImpact(next, wallet.id) - (previous ? entryImpact(previous, wallet.id) : 0)
+    return { id: wallet.id, name: wallet.name, before, after: before + delta, delta }
+  }).filter((wallet) => wallet.delta !== 0)
+  return { changes, combinedDelta: changes.reduce((sum, wallet) => sum + wallet.delta, 0) }
+}
+
 export function monthlyReport(wallets, entries, month) {
   const items = entries.filter((entry) => !entry.deletedAt && entry.date.startsWith(month))
   const income = items.filter((entry) => entry.type === 'income').reduce((sum, entry) => sum + entry.amount, 0)

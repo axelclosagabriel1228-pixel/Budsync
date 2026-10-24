@@ -4,7 +4,7 @@ import { clearDriveDelete, listDriveDeletes, listReceiptFolders, listReceipts, p
 const kind = (file, value) => file.appProperties?.budsyncKind === value
 const idOf = (file) => file.appProperties?.budsyncId
 const stamp = (item) => item.updatedAt || item.createdAt || ''
-const metadata = (item) => JSON.stringify(Object.fromEntries(Object.entries(item).filter(([key]) => !['blob', 'key', 'scope'].includes(key))))
+const metadata = (item) => JSON.stringify(Object.fromEntries(Object.entries(item).filter(([key]) => !['blob', 'key', 'scope', 'driveSyncedRevision'].includes(key))))
 const match = (files, type, id) => files.find((file) => kind(file, type) && idOf(file) === id)
 const receiptStorage = { listReceiptFolders, listReceipts, listDriveDeletes, putReceipt, putReceiptFolder, removeReceipt, removeReceiptFolder, clearDriveDelete }
 
@@ -102,7 +102,7 @@ export async function restoreFromDrive(token, scope, wallets, entryIds = null, s
           const image = match(files, 'receiptImage', localReceipt.id)
           if (allowed(localReceipt) && !localReceipt.blob && image &&
             (image.appProperties?.budsyncRevision || '') >= stamp(localReceipt)) {
-            currentReceipt = { ...localReceipt, blob: await downloadFile(token, image.id) }
+            currentReceipt = { ...localReceipt, blob: await downloadFile(token, image.id), driveSyncedRevision: stamp(localReceipt) }
             await storage.putReceipt(scope, currentReceipt)
             receiptById.set(currentReceipt.id, currentReceipt)
             restored.push({ receipt: currentReceipt, folder: currentFolder })
@@ -119,7 +119,10 @@ export async function restoreFromDrive(token, scope, wallets, entryIds = null, s
         }
         hasIncludedReceipt = true
         const image = match(files, 'receiptImage', receipt.id)
-        if (image) receipt.blob = await downloadFile(token, image.id)
+        if (image) {
+          receipt.blob = await downloadFile(token, image.id)
+          receipt.driveSyncedRevision = stamp(receipt)
+        }
         await storage.putReceipt(scope, receipt)
         receiptById.set(receipt.id, receipt)
         restored.push({ receipt, folder: currentFolder })

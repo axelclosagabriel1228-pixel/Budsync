@@ -14,7 +14,7 @@ const fullCrop = { left: 0, right: 100, top: 0, bottom: 100 }
 const makeId = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
 const blankReceipt = () => ({ merchant: '', date: today(), amount: '', note: '', reason: '' })
 
-function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemoved, onFolderWalletChanged, onDriveSync, driveConnected, driveAvailable, onOpenSettings, refreshKey, hidden }) {
+function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemoved, onFolderWalletChanged, onDriveSync, onConnectDrive, driveConnected, driveAvailable, driveBusy, driveStatus, driveUploadError, driveLastSyncedAt, onOpenSettings, refreshKey, hidden }) {
   const displayMoney = (value) => hidden ? '₱ ••••••' : php(value)
   const [folders, setFolders] = useState([])
   const [receipts, setReceipts] = useState([])
@@ -151,18 +151,17 @@ function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemove
     if (!blob || !blob.type.startsWith('image/')) return setError('Choose an image file for the receipt.')
     setManualMode(false)
     setError('')
-    setBusy('Detecting receipt edges…')
+    setBusy('Preparing receipt image…')
     setImage(blob)
     setSavedBlob(null)
     setImageHash('')
     setScanned(null)
     setRotation(0)
-    try {
-      const detected = await detectReceiptEdges(blob)
-      setCrop(detected || fullCrop)
-      setNotice(detected ? 'Receipt edges detected. Adjust the crop if needed.' : 'Edges were unclear. Adjust the crop before reading.')
-    } catch (cause) { setCrop(fullCrop); setError(`Could not detect edges: ${cause.message}. The full image is available.`) }
-    finally { setBusy('') }
+    let nextCrop = fullCrop
+    try { nextCrop = await detectReceiptEdges(blob) || fullCrop }
+    catch { setNotice('Edges were unclear. The full image is ready; adjust it if needed.') }
+    setCrop(nextCrop)
+    await prepareImage(blob, nextCrop, 0, enhance, false)
   }
 
   function openScanner(receipt = null, manual = false) {
@@ -182,12 +181,12 @@ function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemove
     setNotice('')
   }
 
-  async function prepareAndRead(withOcr) {
-    if (!sourceBlob || crop.left >= crop.right || crop.top >= crop.bottom) return setError('Adjust the crop so it has a visible width and height.')
+  async function prepareImage(blob, imageCrop, imageRotation, imageEnhance, withOcr) {
+    if (!blob || imageCrop.left >= imageCrop.right || imageCrop.top >= imageCrop.bottom) return setError('Adjust the crop so it has a visible width and height.')
     setBusy(withOcr ? 'Reading receipt on this device…' : 'Preparing image…')
     setError('')
     try {
-      const image = await prepareReceiptImage(sourceBlob, crop, rotation, enhance)
+      const image = await prepareReceiptImage(blob, imageCrop, imageRotation, imageEnhance)
       setSavedBlob(image)
       const hash = await crypto.subtle.digest('SHA-256', await image.arrayBuffer())
       setImageHash(Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, '0')).join(''))
@@ -202,9 +201,13 @@ function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemove
           amount: detected.amount ? String(detected.amount) : current.amount,
         }))
         setNotice('Compare the detected details with the image, then save the confirmed amount.')
-      } else setNotice('Image prepared. Enter the receipt details to save it.')
+      } else setNotice('Image ready. Enter the receipt details, or use Read details to fill them in.')
     } catch (cause) { setError(`Receipt reading failed: ${cause.message}. You can crop the image and enter details manually.`) }
     finally { setBusy('') }
+  }
+
+  async function prepareAndRead(withOcr) {
+    await prepareImage(sourceBlob, crop, rotation, enhance, withOcr)
   }
 
   async function submitFolder(event) {
@@ -338,7 +341,8 @@ function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemove
   const activeWallets = wallets.filter((wallet) => !wallet.archived)
   return <div className="receipt-page">
     <div className="page-head"><div><div className="eyebrow">LOCAL RECEIPT RECORDS</div><h1>Receipt folders</h1><p>Scan, review, and record receipts against a wallet.</p></div></div>
-    <p className="receipt-local-note">Images save on this device{driveConnected ? ' and upload to your connected Google Drive' : driveAvailable ? '; connect Google Drive in Settings to upload and restore them' : '; Google Drive uploads are not set up for this site'}. {!driveConnected && <button type="button" onClick={onOpenSettings}>Open Settings</button>} Each confirmed expense deducts once; attaching an image does not deduct it again.</p>
+    <section className="receipt-drive-panel" aria-label="Google Drive receipt sync"><div><strong>{driveConnected ? driveBusy ? 'Updating Google Drive…' : 'Google Drive connected' : driveAvailable ? 'Google Drive disconnected' : 'Google Drive unavailable'}</strong><p role={driveUploadError ? 'alert' : 'status'}>{driveStatus || (driveAvailable ? 'Images save on this device until they reach Drive.' : 'Images save on this device. Drive setup is available in Settings.')}</p>{driveLastSyncedAt && <small>Last checked {driveLastSyncedAt.toLocaleString('en-PH')}</small>}</div><div className="receipt-drive-actions">{driveAvailable && <button className="secondary" type="button" disabled={driveBusy} onClick={driveConnected ? () => onDriveSync() : onConnectDrive}>{driveConnected ? 'Sync now' : 'Connect Drive'}</button>}{!driveConnected && <button className="secondary" type="button" onClick={onOpenSettings}>Settings</button>}</div></section>
+    <p className="receipt-local-note">Each confirmed receipt deducts its expense once. Attaching an image later does not deduct it again.</p>
     {error && <p className="error-banner" role="alert">{error}</p>}
     {notice && <p className="notice-banner" role="status">{notice}</p>}
     <div className="receipt-layout">
@@ -362,15 +366,17 @@ function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemove
           {folderReceipts.length ? <div className="receipt-items">{folderReceipts.map((receipt) => {
             const entry = entryById.get(receipt.entryId)
             const active = entry && !entry.deletedAt
-            return <article className="receipt-item" key={receipt.id}><ReceiptThumbnail key={`${receipt.id}:${receipt.updatedAt}`} receipt={receipt} /><div className="receipt-item-main"><strong>{receipt.merchant}</strong><span>{receipt.date} · {active ? 'Wallet expense recorded' : 'Expense removed from history'} · {receipt.blob ? 'Image attached' : 'No image yet'}</span>{receipt.scanned?.amount && receipt.scanned.amount !== (active ? entry.amount : receipt.amount) && <small>Scan read {displayMoney(receipt.scanned.amount)} · Confirmed {displayMoney(active ? entry.amount : receipt.amount)}</small>}{receipt.note && <small>{receipt.note}</small>}</div><strong className="receipt-item-amount">{active ? displayMoney(entry.amount) : '—'}</strong><div className="receipt-item-actions"><button type="button" onClick={() => openScanner(receipt)}>Edit / attach</button>{receipt.blob && <button type="button" onClick={() => downloadReceipt(receipt)}>Download</button>}<button type="button" onClick={() => deleteReceipt(receipt)}>Delete</button></div></article>
+            const imageSynced = receipt.blob && receipt.driveSyncedRevision === (receipt.updatedAt || receipt.createdAt)
+            const imageStatus = receipt.blob ? imageSynced ? 'Image in Google Drive' : driveConnected ? driveUploadError ? 'Upload needs retry' : driveBusy ? 'Uploading image…' : 'Waiting for Drive upload' : 'Image saved on this device' : 'No image yet'
+            return <article className="receipt-item" key={receipt.id}><ReceiptThumbnail key={`${receipt.id}:${receipt.updatedAt}`} receipt={receipt} /><div className="receipt-item-main"><strong>{receipt.merchant}</strong><span>{receipt.date} · {active ? 'Wallet expense recorded' : 'Expense removed from history'}</span><small className={'receipt-image-status' + (receipt.blob && !imageSynced ? ' pending' : '')}>{imageStatus}</small>{receipt.scanned?.amount && receipt.scanned.amount !== (active ? entry.amount : receipt.amount) && <small>Scan read {displayMoney(receipt.scanned.amount)} · Confirmed {displayMoney(active ? entry.amount : receipt.amount)}</small>}{receipt.note && <small>{receipt.note}</small>}</div><strong className="receipt-item-amount">{active ? displayMoney(entry.amount) : '—'}</strong><div className="receipt-item-actions"><button type="button" onClick={() => openScanner(receipt)}>Edit / attach</button>{receipt.blob && <button type="button" onClick={() => downloadReceipt(receipt)}>Download</button>}{receipt.blob && !imageSynced && driveConnected && driveUploadError && <button type="button" disabled={driveBusy} onClick={() => onDriveSync()}>Retry upload</button>}<button type="button" onClick={() => deleteReceipt(receipt)}>Delete</button></div></article>
           })}</div> : <p className="receipt-empty-copy">No records yet. Add an amount now or capture a receipt to create an expense.</p>}
         </> : <div className="empty"><strong>Choose or create a folder</strong><p>Each folder connects its receipt expenses to one wallet.</p></div>}
       </section>
     </div>
     {scanOpen && createPortal(<div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) { stopCamera(); setScanOpen(false) } }}><div className="modal receipt-modal" role="dialog" aria-modal="true" aria-labelledby="receipt-modal-title"><div className="modal-head"><div><div className="eyebrow">DOCUMENT SCANNER</div><h2 id="receipt-modal-title">{editingReceipt ? 'Edit expense record' : manualMode ? 'Add expense amount' : 'Scan receipt'}</h2><p>{manualMode ? 'Save an amount now. You can attach its receipt later without another deduction.' : 'Capture, crop, compare, then confirm the expense.'}</p></div><button type="button" aria-label="Close" onClick={() => { stopCamera(); setScanOpen(false) }}>×</button></div>
-      <div className="receipt-scan-body"><div className="receipt-capture-actions"><button className="secondary" type="button" onClick={startCamera} disabled={Boolean(busy) || cameraOn}>Open camera</button><label className="secondary">Upload image<input type="file" accept="image/*" onChange={(event) => { chooseImage(event.target.files?.[0]); event.target.value = '' }} /></label><label className="secondary">Phone camera<input type="file" accept="image/*" capture="environment" onChange={(event) => { chooseImage(event.target.files?.[0]); event.target.value = '' }} /></label></div>
+      <div className="receipt-scan-body"><div className="receipt-capture-actions"><label className="primary">Take photo<input type="file" accept="image/*" capture="environment" onChange={(event) => { chooseImage(event.target.files?.[0]); event.target.value = '' }} /></label><label className="secondary">Choose image<input type="file" accept="image/*" onChange={(event) => { chooseImage(event.target.files?.[0]); event.target.value = '' }} /></label></div>
         {cameraOn && <div className="receipt-camera"><video ref={videoRef} autoPlay playsInline muted /><div className="receipt-camera-actions"><button className="primary" type="button" onClick={captureCamera}>Capture receipt</button><button className="secondary" type="button" onClick={stopCamera}>Stop camera</button></div></div>}
-        {previewUrl && <><div className="receipt-preview"><img src={previewUrl} alt="Receipt ready to crop" /><div className="receipt-crop-box" style={{ left: `${crop.left}%`, top: `${crop.top}%`, width: `${crop.right - crop.left}%`, height: `${crop.bottom - crop.top}%` }} /></div><div className="receipt-crop-controls">{['left', 'right', 'top', 'bottom'].map((side) => <label key={side}>{side}<input type="range" min="0" max="100" value={crop[side]} onChange={(event) => { setCrop({ ...crop, [side]: Number(event.target.value) }); setSavedBlob(null) }} /></label>)}</div><div className="receipt-image-options"><button className="secondary" type="button" onClick={() => { setRotation((value) => (value + 90) % 360); setSavedBlob(null) }}>Rotate 90°</button><label><input type="checkbox" checked={enhance} onChange={(event) => { setEnhance(event.target.checked); setSavedBlob(null) }} /> Enhance black and white</label><button className="secondary" type="button" onClick={() => { setCrop(fullCrop); setSavedBlob(null) }}>Reset crop</button>{editingReceipt?.blob && <button className="secondary" type="button" onClick={() => { setImage(null); setSavedBlob(null); setImageHash(''); setScanned(null); setManualMode(true) }}>Remove image</button>}</div><div className="receipt-form-actions"><button className="primary" type="button" disabled={Boolean(busy)} onClick={() => prepareAndRead(true)}>Crop and read details</button><button className="secondary" type="button" disabled={Boolean(busy)} onClick={() => prepareAndRead(false)}>Crop only</button></div></>}
+        {previewUrl && <><div className="receipt-preview"><img src={previewUrl} alt="Receipt ready to review" /><div className="receipt-crop-box" style={{ left: `${crop.left}%`, top: `${crop.top}%`, width: `${crop.right - crop.left}%`, height: `${crop.bottom - crop.top}%` }} /></div><details className="receipt-adjustments"><summary>Adjust image</summary><div className="receipt-crop-controls">{['left', 'right', 'top', 'bottom'].map((side) => <label key={side}>{side}<input type="range" min="0" max="100" value={crop[side]} onChange={(event) => { setCrop({ ...crop, [side]: Number(event.target.value) }); setSavedBlob(null) }} /></label>)}</div><div className="receipt-image-options"><button className="secondary" type="button" onClick={() => { setRotation((value) => (value + 90) % 360); setSavedBlob(null) }}>Rotate 90°</button><label><input type="checkbox" checked={enhance} onChange={(event) => { setEnhance(event.target.checked); setSavedBlob(null) }} /> Enhance black and white</label><button className="secondary" type="button" onClick={() => { setCrop(fullCrop); setSavedBlob(null) }}>Reset crop</button><button className="secondary" type="button" onClick={startCamera} disabled={Boolean(busy) || cameraOn}>Use live camera</button>{editingReceipt?.blob && <button className="secondary" type="button" onClick={() => { setImage(null); setSavedBlob(null); setImageHash(''); setScanned(null); setManualMode(true) }}>Remove image</button>}</div>{!savedBlob && <p>Image changes need to be applied before saving.</p>}<button className="secondary" type="button" disabled={Boolean(busy)} onClick={() => prepareAndRead(false)}>Apply image changes</button></details><div className="receipt-form-actions"><button className="secondary" type="button" disabled={Boolean(busy)} onClick={() => prepareAndRead(true)}>Read details from image</button></div></>}
         {busy && <p className="receipt-status" role="status">{busy}</p>}
         {scanned && <div className="receipt-comparison"><strong>Detected details · compare with the receipt</strong><span>Merchant: {scanned.merchant || 'Unclear'}</span><span>Date: {scanned.date || 'Unclear'}</span><span>Amount: {scanned.amount ? displayMoney(scanned.amount) : 'Unclear'}</span></div>}
         {scanned?.lineItems?.length > 0 && <div className="receipt-line-items"><strong>Detected line items</strong>{scanned.lineItems.map((item, index) => <div key={`${item.description}-${index}`}><span>{item.description}</span><b>{displayMoney(item.amount)}</b></div>)}<div className="receipt-line-total"><span>Items total</span><b>{displayMoney(scanned.lineItemTotal)}</b></div>{scanned.amount && <small>{Math.abs(scanned.amount - scanned.lineItemTotal) < .01 ? 'Items match the detected receipt total.' : `Items differ from the detected total by ${displayMoney(Math.abs(scanned.amount - scanned.lineItemTotal))}. Check discounts, tax, and OCR.`}</small>}</div>}

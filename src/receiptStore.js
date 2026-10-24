@@ -52,6 +52,30 @@ export async function putReceipt(scope, receipt) {
   await requestStore(receiptsStore, 'readwrite', (store) => store.put({ ...receipt, scope, key: keyFor(scope, receipt.id) }))
 }
 
+export async function markReceiptDriveSynced(scope, id, revision) {
+  const db = await openDatabase()
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = db.transaction(receiptsStore, 'readwrite')
+      const store = transaction.objectStore(receiptsStore)
+      let changed = false
+      const request = store.get(keyFor(scope, id))
+      request.onsuccess = () => {
+        const receipt = request.result
+        if (receipt && (receipt.updatedAt || receipt.createdAt) === revision && receipt.driveSyncedRevision !== revision) {
+          store.put({ ...receipt, driveSyncedRevision: revision })
+          changed = true
+        }
+      }
+      transaction.oncomplete = () => resolve(changed)
+      transaction.onerror = () => reject(transaction.error)
+      transaction.onabort = () => reject(transaction.error)
+    })
+  } finally {
+    db.close()
+  }
+}
+
 export async function removeReceipt(scope, id, queueDriveDelete = true) {
   const db = await openDatabase()
   try {

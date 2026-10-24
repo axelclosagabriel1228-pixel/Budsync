@@ -398,11 +398,15 @@ body { font-family: 'DM Sans', 'Segoe UI', sans-serif; }
 @media (max-width: 820px) {
   .sidebar { background: var(--glass); }
 }
-.setup-screen { display: grid; place-items: center; min-height: 100dvh; padding: 24px; background: var(--canvas); color: var(--ink); }
-.setup-card { width: min(100%, 540px); padding: clamp(24px, 5vw, 42px); border: 1px solid var(--line); border-radius: 24px; background: var(--glass); box-shadow: var(--glass-shadow); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px); }
+.setup-screen { display: grid; grid-template-columns: minmax(0, 1fr); place-items: center; min-height: 100dvh; padding: 24px; background: var(--canvas); color: var(--ink); }
+.setup-card { width: min(100%, 540px); min-width: 0; padding: clamp(24px, 5vw, 42px); border: 1px solid var(--line); border-radius: 24px; background: var(--glass); box-shadow: var(--glass-shadow); backdrop-filter: blur(22px); -webkit-backdrop-filter: blur(22px); }
 .setup-card h1 { margin: 10px 0; font: 700 clamp(30px, 5vw, 43px) Georgia, 'Times New Roman', serif; }
 .setup-card p { color: var(--muted); font-size: 13px; line-height: 1.6; }
 .setup-options { display: grid; gap: 12px; margin-top: 22px; }
 .setup-options button { display: grid; gap: 5px; min-height: 74px; padding: 15px; border: 1px solid var(--line); border-radius: 13px; background: var(--surface); color: var(--ink); text-align: left; }
 .setup-options button:hover, .setup-options button:focus-visible { border-color: var(--ink); box-shadow: inset 3px 0 0 var(--ink); }
 .setup-options strong { font: 700 17px Georgia, 'Times New Roman', serif; }.setup-options span { color: var(--muted); font-size: 11px; }
+.page-head p, .data-card p, .modal-head p, .report-note, .report-wallet-row span, .form-fields em { color: var(--muted); font-size: 13px; }
+.form-fields label, .auth-form label, .receipt-folder-form label, .receipt-detail-form label { color: var(--muted); font-size: 13px; }
+.form-fields input, .form-fields select, .form-fields textarea { font-size: 16px; }
+.row-actions button, .wallet-actions button, .receipt-item-actions button, .type-tabs button { min-height: 44px; font-size: 12px; }

@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { backupJson, parseBackup, starterWallets, transactionsCsv } from './data.js'
-import { entryImpact, monthlyReport, walletBalances } from './finance.js'
+import { entryImpact, monthlyReport, previewEntryBalances, walletBalances } from './finance.js'
 import { freshWorkspace, readPreviousAccountWorkspace, readWorkspace, workspaceKey, writeWorkspace } from './localStore.js'
 import { applySnapshot, cloudReady, fetchSnapshot, readSession, signIn, signOut, signUp } from './cloud.js'
 import { changedRecords } from './syncReview.js'
 import { budgetUsage, cashFlowByMonth, monthComparison } from './insights.js'
 import ReceiptPage from './ReceiptPage.jsx'
 import { moveReceiptExpenses, removeReceiptExpenses, upsertReceiptExpense } from './receiptFinance.js'
-import { listDriveDeletes, listReceiptFolders, listReceipts, pruneReceiptCache } from './receiptStore.js'
+import { listDriveDeletes, listReceiptFolders, listReceipts, markReceiptDriveSynced, pruneReceiptCache } from './receiptStore.js'
 import { reconcileReceiptData } from './receiptReconcile.js'
 import { connectGoogleDrive, googleClientId, loadGoogleIdentity } from './googleDrive.js'
 import { restoreFromDrive, syncToDrive } from './googleDriveSync.js'
@@ -109,6 +109,7 @@ function App() {
   const data = workspace.data
   const accountId = session?.user.id
   const [page, setPage] = useState('overview')
+  const [settingsSection, setSettingsSection] = useState('connections')
   const [modal, setModal] = useState(null)
   const [form, setForm] = useState(() => entryForm('expense', starterWallets))
   const [walletForm, setWalletForm] = useState({ name: '', openingBalance: '0', editNote: '' })
@@ -124,6 +125,8 @@ function App() {
   const [driveSession, setDriveSession] = useState(null)
   const [driveBusy, setDriveBusy] = useState(false)
   const [driveStatus, setDriveStatus] = useState('')
+  const [driveUploadError, setDriveUploadError] = useState('')
+  const [driveLastSyncedAt, setDriveLastSyncedAt] = useState(null)
   const [receiptRefresh, setReceiptRefresh] = useState(0)
   const driveSessionRef = useRef(null)
   const driveLock = useRef(false)
@@ -321,6 +324,8 @@ function App() {
     driveSessionRef.current = null
     setDriveSession(null)
     setDriveStatus('')
+    setDriveUploadError('')
+    setDriveLastSyncedAt(null)
     pendingDriveReceipts.current.clear()
     try {
       const nextScope = workspaceKey(nextSession.user.id)
@@ -384,6 +389,8 @@ function App() {
       driveSessionRef.current = null
       setDriveSession(null)
       setDriveStatus('')
+      setDriveUploadError('')
+      setDriveLastSyncedAt(null)
       pendingDriveReceipts.current.clear()
       setSession(null)
       setConflict(null)
@@ -693,6 +700,13 @@ function App() {
     uploadReceipts()
   }
 
+  async function recordDriveSync(current, result) {
+    const changed = await Promise.all(result.syncedReceipts.map(({ id, revision }) => markReceiptDriveSynced(current.scope, id, revision)))
+    if (changed.some(Boolean)) setReceiptRefresh((value) => value + 1)
+    setDriveUploadError('')
+    setDriveLastSyncedAt(new Date())
+  }
+
   async function uploadReceipts() {
     const current = driveSessionRef.current
     if (!current) return
@@ -700,6 +714,7 @@ function App() {
     if (Date.now() >= current.expiresAt - 30000) {
       driveSessionRef.current = null
       setDriveSession(null)
+      setDriveUploadError('Reconnect Google Drive to finish uploading.')
       setDriveStatus('Google Drive needs reconnection. Local receipt changes are pending.')
       for (const pending of pendingDriveReceipts.current.values()) pending.notify?.('Reconnect Google Drive to finish uploading.')
       return
@@ -709,6 +724,7 @@ function App() {
     try {
       const restored = await pullDriveReceipts(current)
       const result = await syncToDrive(current.token, current.scope, workspaceRef.current.data.wallets)
+      await recordDriveSync(current, result)
       setDriveStatus(`Google Drive updated${result.uploaded ? `: ${result.uploaded} files` : ''}${restored.receipts ? `; downloaded ${restored.receipts} receipts` : ''}.`)
       const confirmed = result.syncedReceipts.filter(({ id, revision }) =>
         pendingDriveReceipts.current.has(id) && revision === pendingDriveReceipts.current.get(id).revision).map(({ id }) => id)
@@ -726,6 +742,7 @@ function App() {
         }
       }
     } catch (cause) {
+      setDriveUploadError(cause.message)
       setDriveStatus(`Drive upload failed: ${cause.message}. Local changes are pending.`)
       for (const pending of pendingDriveReceipts.current.values()) pending.notify?.(cause.message)
     }
@@ -749,8 +766,9 @@ function App() {
       setDriveStatus('Connected. Checking Drive for receipt changes…')
       const restored = await pullDriveReceipts(current)
       const uploaded = await syncToDrive(current.token, current.scope, workspaceRef.current.data.wallets)
+      await recordDriveSync(current, uploaded)
       setDriveStatus(`Connected. Updated ${restored.folders} folders and ${restored.receipts} receipts; uploaded ${uploaded.uploaded} files.${restored.skipped ? ` ${restored.skipped} items need matching wallets.` : ''}`)
-    } catch (cause) { setDriveStatus(`Google Drive connection failed: ${cause.message}`) }
+    } catch (cause) { setDriveUploadError(cause.message); setDriveStatus(`Google Drive connection failed: ${cause.message}`) }
     finally {
       driveLock.current = false
       setDriveBusy(false)
@@ -798,12 +816,12 @@ function App() {
         <div className={'mobile-sync-pill' + (syncError || storageError ? ' status-error' : workspace.dirty ? ' status-pending' : '')} role="status"><i /> {syncStatus}</div>
         {!saveAllowed && <div className="error-banner" role="alert">Saved data could not be read. It has not been replaced. Restore a backup in Settings, or <button type="button" onClick={() => { setSaveAllowed(true); setNotice('Started with sample data.') }}>start fresh</button>.</div>}
         {storageError && <div className="error-banner" role="alert">{storageError}</div>}
-        {syncError && <div className="error-banner" role="alert">{syncError} <button type="button" onClick={() => setPage('account')}>Open sync settings</button></div>}
+        {syncError && <div className="error-banner" role="alert">{syncError} <button type="button" onClick={() => { setSettingsSection('connections'); setPage('account') }}>Open sync settings</button></div>}
         {notice && <div className="notice-banner" role="status">{notice}<button type="button" onClick={() => setNotice('')} aria-label="Dismiss notice">×</button></div>}
         {data.sampleBalances && data.entries.length > 0 && <div className="sample-banner"><span><strong>Sample opening balances</strong> from the V1 plan are loaded for testing. Entries you add save on this device.</span><button type="button" onClick={clearSamples}>Start from ₱0 instead →</button></div>}
 
         {page === 'overview' && <>
-          {data.sampleBalances && data.entries.length === 0 && <section className="welcome-card" aria-labelledby="welcome-title"><div><span className="widget-kicker">WELCOME TO BUDSYNC</span><h2 id="welcome-title">Your money, in a clearer view.</h2><p>Explore with the plan’s sample opening balances, start with zero, or bring in an existing account or backup. {session ? 'Changes save on this device and sync when online.' : 'Guest entries stay on this device until you choose to sign in and copy them.'}</p><div className="button-row"><button type="button" className="primary" onClick={clearSamples}>Start fresh at ₱0</button><button type="button" className="secondary" onClick={() => setPage('account')}>Restore existing data</button></div></div><div className="welcome-art" aria-hidden="true"><i /><i /><i /></div></section>}
+          {data.sampleBalances && data.entries.length === 0 && <section className="welcome-card" aria-labelledby="welcome-title"><div><span className="widget-kicker">WELCOME TO BUDSYNC</span><h2 id="welcome-title">Your money, in a clearer view.</h2><p>Explore with the plan’s sample opening balances, start with zero, or bring in an existing account or backup. {session ? 'Changes save on this device and sync when online.' : 'Guest entries stay on this device until you choose to sign in and copy them.'}</p><div className="button-row"><button type="button" className="primary" onClick={clearSamples}>Start fresh at ₱0</button><button type="button" className="secondary" onClick={() => { setSettingsSection('data'); setPage('account') }}>Restore existing data</button></div></div><div className="welcome-art" aria-hidden="true"><i /><i /><i /></div></section>}
           <div className="page-head"><div><div className="eyebrow">YOUR FINANCIAL SPACE</div><h1>Good to see you.</h1><p>A clear picture of your money, all in one place.</p></div></div>
           <section className="balance-hero" aria-label="Combined wallet balance"><div className="hero-main"><div className="hero-label">TOTAL BALANCE <span>Across {data.wallets.length} wallets</span></div><div className="hero-amount"><strong key={balanceHidden ? 'hidden' : combined}>{balanceHidden ? '₱ ••••••' : php(combined)}</strong><button type="button" aria-label={balanceHidden ? 'Show balance' : 'Hide balance'} onClick={() => setBalanceHidden(!balanceHidden)}><NavIcon name={balanceHidden ? 'eyeOff' : 'eye'} size={19} /></button></div><p>Opening balances plus your recorded activity</p><button className="hero-action" type="button" onClick={() => openEntry()}><NavIcon name="plus" size={16} /> Add transaction</button></div><div className="hero-side"><span>{monthLabel.toUpperCase()}</span><strong>{balanceHidden ? '₱ ••••••' : php(currentReport.net)}</strong><small>Net income after expenses</small></div></section>
           <div className="metrics"><Metric label="Income this month" value={balanceHidden ? '₱ ••••••' : php(currentReport.income)} detail={monthComparison(currentReport.income, previousReport.income)} tone="green" icon="↓" /><Metric label="Expenses this month" value={balanceHidden ? '₱ ••••••' : php(currentReport.expenses)} detail={monthComparison(currentReport.expenses, previousReport.expenses)} tone="coral" icon="↑" /></div>
@@ -833,10 +851,12 @@ function App() {
 
         {page === 'reports' && <Reports report={report} month={reportMonth} onMonth={setReportMonth} budgets={data.budgets || []} goals={data.goals || []} wallets={data.wallets} balances={balances} hidden={balanceHidden} onAddBudget={addBudget} onRemoveBudget={removeBudget} onAddGoal={addGoal} onRemoveGoal={removeGoal} />}
 
-        {page === 'receipts' && <ReceiptPage scope={scope} wallets={data.wallets} entries={data.entries} onExpenseSaved={saveReceiptExpense} onExpensesRemoved={reverseReceiptExpenses} onFolderWalletChanged={changeReceiptFolderWallet} onDriveSync={requestReceiptDriveSync} driveConnected={Boolean(driveSession)} driveAvailable={Boolean(googleClientId)} onOpenSettings={() => setPage('account')} refreshKey={receiptRefresh} hidden={balanceHidden} />}
+        {page === 'receipts' && <ReceiptPage scope={scope} wallets={data.wallets} entries={data.entries} onExpenseSaved={saveReceiptExpense} onExpensesRemoved={reverseReceiptExpenses} onFolderWalletChanged={changeReceiptFolderWallet} onDriveSync={requestReceiptDriveSync} onConnectDrive={connectDrive} driveConnected={Boolean(driveSession)} driveAvailable={Boolean(googleClientId)} driveBusy={driveBusy} driveStatus={driveStatus} driveUploadError={driveUploadError} driveLastSyncedAt={driveLastSyncedAt} onOpenSettings={() => { setSettingsSection('connections'); setPage('account') }} refreshKey={receiptRefresh} hidden={balanceHidden} />}
 
         {page === 'account' && <div className="data-page">
           <div className="page-head"><div><div className="eyebrow">YOUR SPACE</div><h1>Settings</h1><p>Manage your account, backups, and sync.</p></div></div>
+          <div className="settings-tabs" role="group" aria-label="Settings section"><button type="button" aria-pressed={settingsSection === 'connections'} className={settingsSection === 'connections' ? 'selected' : ''} onClick={() => setSettingsSection('connections')}>Connections</button><button type="button" aria-pressed={settingsSection === 'data'} className={settingsSection === 'data' ? 'selected' : ''} onClick={() => setSettingsSection('data')}>Data & backup</button></div>
+          {settingsSection === 'connections' && <>
           <section className="data-card account-access"><h2>Account</h2>{authConfirmation && <p className="account-confirmation" role="status">{authConfirmation}</p>}{session ? <>
             <p>Logged in as <strong>{session.user.email}</strong>. Your account records save on this device and sync when online.</p>
             <p className="sync-state" role="status">{syncStatus}</p>
@@ -858,9 +878,12 @@ function App() {
             </> : <p>Account access needs the Firebase web app values in <code>.env.local</code>.</p>}
           </>}</section>
           <section className="data-card"><h2>Google Drive receipts</h2><p>Connect a Google account to upload and restore receipt folders and images. Budsync creates <code>Budsync / wallet name / folder name / files</code> in Drive. Deleted local receipts and folders move to Drive Trash on the next sync. Your local copy remains available while disconnected.</p>{googleClientId ? <div className="button-row"><button className="primary" type="button" disabled={driveBusy || !isOnline} onClick={connectDrive}>{driveSession ? 'Reconnect Google Drive' : 'Connect Google Drive'}</button><button className="secondary" type="button" disabled={driveBusy || !driveSession || !isOnline} onClick={uploadReceipts}>Sync receipts now</button><button className="secondary" type="button" disabled={driveBusy || !driveSession || !isOnline} onClick={restoreDrive}>Download Drive changes</button></div> : <p>Google Drive uploads are not set up for this site. Add a Google OAuth Web client ID as <code>VITE_GOOGLE_CLIENT_ID</code>, then rebuild and deploy the app. Images saved now stay on this device. The README has setup steps.</p>}{driveStatus && <p className="sync-state" role="status">{driveStatus}</p>}</section>
+          </>}
+          {settingsSection === 'data' && <>
           <section className="data-card"><h2>Backup & export</h2><p>Download a JSON backup to restore wallet records later. Receipt images and folders stay on this device; download individual images from Receipts. CSV is for viewing transactions in a spreadsheet.</p><div className="button-row"><button className="primary" type="button" onClick={() => download('budsync-backup-' + localDate() + '.json', backupJson(data), 'application/json')}>Download backup</button><button className="secondary" type="button" onClick={() => download('budsync-transactions-' + localDate() + '.csv', transactionsCsv(data), 'text/csv;charset=utf-8')}>Export CSV</button></div></section>
           <section className="data-card"><h2>Restore a backup</h2><p>Choose a Budsync JSON backup. Review its contents before replacing this device’s records.</p><label className="import-label">Choose backup file<input type="file" accept=".json,application/json" onChange={chooseBackup} /></label>{error && <p className="form-error" role="alert">{error}</p>}{pendingBackup && <div className="restore-review"><strong>{pendingBackup.name}</strong><span>{pendingBackup.data.wallets.length} wallets · {pendingBackup.data.entries.length} transactions · {pendingBackup.data.budgets.length} budgets · {pendingBackup.data.goals.length} goals</span><p>Restoring replaces wallets, transactions, budgets, and goals. Local receipt folders and images without a matching receipt expense in this backup are removed, and those deletions sync to connected Google Drive. Download your current backup and any receipt images you need first.</p><div className="button-row"><button className="primary" type="button" onClick={restoreBackup}>Replace with this backup</button><button className="secondary" type="button" onClick={() => setPendingBackup(null)}>Cancel</button></div></div>}</section>
-          {session && <section className="data-card"><h2>Account sync</h2>
+          </>}
+          {settingsSection === 'connections' && session && <section className="data-card"><h2>Account sync</h2>
             <p>While the app is open, changes from other devices appear automatically within a few seconds.</p>
             <p className="sync-state" role="status">{syncStatus}</p>
             <div className="button-row"><button className="secondary" type="button" disabled={syncing} onClick={() => checkCloud()}>Check for updates</button><button className="secondary" type="button" onClick={reviewGuest}>Copy guest data here</button><button className="secondary" type="button" onClick={reviewPreviousAccount}>Copy previous account data</button></div>
@@ -878,7 +901,7 @@ function App() {
       {[['transactions', 'Activity'], ['receipts', 'Receipts']].map(([id, label]) => <button type="button" key={id} className={page === id ? 'active' : ''} aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}><NavIcon name={id} /><span>{label}</span></button>)}
     </nav>
 
-    {modal?.kind === 'entry' && <EntryModal form={form} setForm={setForm} error={error} setError={setError} modal={modal} wallets={data.wallets} onClose={() => setModal(null)} onSave={saveEntry} />}
+    {modal?.kind === 'entry' && <EntryModal form={form} setForm={setForm} error={error} setError={setError} modal={modal} wallets={data.wallets} balances={balances} previous={data.entries.find((entry) => entry.id === modal.id)} hidden={balanceHidden} onClose={() => setModal(null)} onSave={saveEntry} />}
     {modal?.kind === 'wallet' && <WalletModal form={walletForm} setForm={setWalletForm} error={error} setError={setError} editing={Boolean(modal.id)} onClose={() => setModal(null)} onSave={saveWallet} />}
   </div>
 }
@@ -978,8 +1001,9 @@ function PlanningPanel({ report, budgets, goals, wallets, balances, hidden, onAd
   return <><SectionHeading title="Plans & goals" subtitle="Targets are based on your recorded activity and wallet balances." /><div className="planning-grid"><section className="data-card plan-card" aria-labelledby="budgets-title"><div className="widget-head"><div><span className="widget-kicker">SPENDING GUARDRAILS</span><h2 id="budgets-title">Monthly budgets</h2><p>Set a limit for any expense category.</p></div></div>{budgets.length ? <div className="plan-list">{budgets.map((budget) => <div className="plan-item" key={budget.id}><BudgetProgress budget={budget} report={report} hidden={hidden} /><button type="button" onClick={() => onRemoveBudget(budget.id)} aria-label={`Remove ${budget.category} budget`}>Remove</button></div>)}</div> : <p className="plan-empty">No budgets yet. Add one to see your monthly progress.</p>}<form className="plan-form" onSubmit={submitBudget}><label>Category<input required list="budget-categories" maxLength="60" placeholder="e.g. Food" value={budgetForm.category} onChange={(event) => setBudgetForm({ ...budgetForm, category: event.target.value })} /><datalist id="budget-categories">{categories.expense.map((category) => <option key={category} value={category} />)}</datalist></label><label>Monthly limit (PHP)<input required type="number" min="0.01" step="0.01" placeholder="0.00" value={budgetForm.limit} onChange={(event) => setBudgetForm({ ...budgetForm, limit: event.target.value })} /></label>{budgetError && <p className="form-error" role="alert">{budgetError}</p>}<button className="secondary" type="submit">Add budget</button></form></section><section className="data-card plan-card" aria-labelledby="goals-title"><div className="widget-head"><div><span className="widget-kicker">LOOKING AHEAD</span><h2 id="goals-title">Savings targets</h2><p>Follow a wallet balance toward a goal.</p></div></div>{goals.length ? <div className="plan-list">{goals.map((goal) => { const wallet = wallets.find((item) => item.id === goal.walletId); const progress = Math.max(0, balances[goal.walletId] || 0); const percent = Math.min(100, progress / goal.target * 100); return <div className="plan-item" key={goal.id}><div className="plan-progress"><div className="plan-progress-top"><strong>{goal.name}</strong><span>{shownMoney(progress, hidden)} of {shownMoney(goal.target, hidden)}</span></div><div className="plan-track goal-track" role="meter" aria-label={`${goal.name} target progress`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(percent)} aria-valuetext={hidden ? 'Amount hidden' : `${php(progress)} of ${php(goal.target)}`}><i style={{ width: `${percent}%` }} /></div><small>{wallet?.name || 'Wallet'} · {Math.round(percent)}% of target</small></div><button type="button" onClick={() => onRemoveGoal(goal.id)} aria-label={`Remove ${goal.name} target`}>Remove</button></div> })}</div> : <p className="plan-empty">No savings targets yet. Choose a wallet and a target amount.</p>}<form className="plan-form" onSubmit={submitGoal}><label>Goal name<input required maxLength="60" placeholder="e.g. Emergency fund" value={goalForm.name} onChange={(event) => setGoalForm({ ...goalForm, name: event.target.value })} /></label><label>Target amount (PHP)<input required type="number" min="0.01" step="0.01" placeholder="0.00" value={goalForm.target} onChange={(event) => setGoalForm({ ...goalForm, target: event.target.value })} /></label><label>Wallet<select value={goalForm.walletId} onChange={(event) => setGoalForm({ ...goalForm, walletId: event.target.value })}>{wallets.map((wallet) => <option key={wallet.id} value={wallet.id}>{wallet.name}</option>)}</select></label>{goalError && <p className="form-error" role="alert">{goalError}</p>}<button className="secondary" type="submit">Add target</button></form><p className="plan-explain">Targets track existing balances; no money is moved.</p></section></div></>
 }
 
-function EntryModal({ form, setForm, error, setError, modal, wallets, onClose, onSave }) {
+function EntryModal({ form, setForm, error, setError, modal, wallets, balances, previous, hidden, onClose, onSave }) {
   const selectedIds = [form.walletId, form.fromWalletId, form.toWalletId]
+  const preview = previewEntryBalances(wallets, balances, form, previous)
   const update = (field, value) => {
     setForm((current) => ({
       ...current,
@@ -989,7 +1013,7 @@ function EntryModal({ form, setForm, error, setError, modal, wallets, onClose, o
     setError('')
   }
   const options = wallets.map((wallet) => <option key={wallet.id} value={wallet.id} disabled={wallet.archived && !selectedIds.includes(wallet.id)}>{wallet.name}{wallet.archived ? ' (archived)' : ''}</option>)
-  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div className="modal-head"><div><div className="eyebrow">{modal.id ? 'UPDATE RECORD' : 'NEW RECORD'}</div><h2 id="modal-title">{modal.id ? 'Edit transaction' : 'Add transaction'}</h2><p>Keep your wallet activity up to date.</p></div><button type="button" onClick={onClose} aria-label="Close">×</button></div><form onSubmit={onSave}><div className="type-tabs" role="group" aria-label="Transaction type">{['income', 'expense', 'transfer', 'adjustment'].map((type) => <button type="button" key={type} className={form.type === type ? 'selected' : ''} onClick={() => update('type', type)}>{type === 'adjustment' ? 'Adjust' : type[0].toUpperCase() + type.slice(1)}</button>)}</div><div className="form-fields"><div className="field-pair"><label>Amount<span className="amount-wrap"><b>₱</b><input required type="number" min="0.01" step="0.01" value={form.amount} placeholder="0.00" onChange={(event) => update('amount', event.target.value)} /></span></label><label>Date<input required type="date" value={form.date} onChange={(event) => update('date', event.target.value)} /></label></div>{form.type === 'transfer' ? <div className="field-pair"><label>From wallet<select value={form.fromWalletId} onChange={(event) => update('fromWalletId', event.target.value)}>{options}</select></label><label>To wallet<select value={form.toWalletId} onChange={(event) => update('toWalletId', event.target.value)}>{options}</select></label></div> : <label>Wallet<select value={form.walletId} onChange={(event) => update('walletId', event.target.value)}>{options}</select></label>}{form.type === 'adjustment' && <label>Effect<select value={form.adjustmentEffect} onChange={(event) => update('adjustmentEffect', event.target.value)}><option value="increase">Increase balance</option><option value="decrease">Decrease balance</option></select></label>}{['income', 'expense'].includes(form.type) && <label>Category <em>Choose or type your own</em><input list="category-options" maxLength="60" value={form.category} placeholder={form.type === 'income' ? 'e.g. Salary' : 'e.g. Food'} onChange={(event) => update('category', event.target.value)} /><datalist id="category-options">{categories[form.type].map((category) => <option key={category} value={category} />)}</datalist></label>}<label>{form.type === 'adjustment' ? 'Reason note' : 'Note'} {form.type !== 'adjustment' && <em>Optional</em>}<textarea rows="2" maxLength="300" required={form.type === 'adjustment'} value={form.note} placeholder={form.type === 'adjustment' ? 'Explain this balance correction' : 'Add a little context'} onChange={(event) => update('note', event.target.value)} /></label>{modal.id && <label>Reason for edit<textarea rows="2" maxLength="300" required value={form.editNote} placeholder="What changed and why?" onChange={(event) => update('editNote', event.target.value)} /></label>}{error && <p className="form-error" role="alert">{error}</p>}</div><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancel</button><button className="primary" type="submit">{modal.id ? 'Save changes' : 'Save transaction'}</button></div></form></div></div>
+  return <div className="modal-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}><div className="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div className="modal-head"><div><div className="eyebrow">{modal.id ? 'UPDATE RECORD' : 'NEW RECORD'}</div><h2 id="modal-title">{modal.id ? 'Edit transaction' : 'Add transaction'}</h2><p>Keep your wallet activity up to date.</p></div><button type="button" onClick={onClose} aria-label="Close">×</button></div><form onSubmit={onSave}><div className="type-tabs" role="group" aria-label="Transaction type">{['income', 'expense', 'transfer', 'adjustment'].map((type) => <button type="button" key={type} className={form.type === type ? 'selected' : ''} onClick={() => update('type', type)}>{type === 'adjustment' ? 'Adjust' : type[0].toUpperCase() + type.slice(1)}</button>)}</div><div className="form-fields"><div className="field-pair"><label>Amount<span className="amount-wrap"><b>₱</b><input required type="number" min="0.01" step="0.01" value={form.amount} placeholder="0.00" onChange={(event) => update('amount', event.target.value)} /></span></label><label>Date<input required type="date" value={form.date} onChange={(event) => update('date', event.target.value)} /></label></div>{form.type === 'transfer' ? <div className="field-pair"><label>From wallet<select value={form.fromWalletId} onChange={(event) => update('fromWalletId', event.target.value)}>{options}</select></label><label>To wallet<select value={form.toWalletId} onChange={(event) => update('toWalletId', event.target.value)}>{options}</select></label></div> : <label>Wallet<select value={form.walletId} onChange={(event) => update('walletId', event.target.value)}>{options}</select></label>}{form.type === 'adjustment' && <label>Effect<select value={form.adjustmentEffect} onChange={(event) => update('adjustmentEffect', event.target.value)}><option value="increase">Increase balance</option><option value="decrease">Decrease balance</option></select></label>}{['income', 'expense'].includes(form.type) && <label>Category <em>Choose or type your own</em><input list="category-options" maxLength="60" value={form.category} placeholder={form.type === 'income' ? 'e.g. Salary' : 'e.g. Food'} onChange={(event) => update('category', event.target.value)} /><datalist id="category-options">{categories[form.type].map((category) => <option key={category} value={category} />)}</datalist></label>}<label>{form.type === 'adjustment' ? 'Reason note' : 'Note'} {form.type !== 'adjustment' && <em>Optional</em>}<textarea rows="2" maxLength="300" required={form.type === 'adjustment'} value={form.note} placeholder={form.type === 'adjustment' ? 'Explain this balance correction' : 'Add a little context'} onChange={(event) => update('note', event.target.value)} /></label>{modal.id && <label>Reason for edit<textarea rows="2" maxLength="300" required value={form.editNote} placeholder="What changed and why?" onChange={(event) => update('editNote', event.target.value)} /></label>}{preview && <div className="entry-preview"><strong>Balance after saving</strong>{preview.changes.map((wallet) => <div key={wallet.id}><span>{wallet.name}</span><span>{shownMoney(wallet.before, hidden)} → {shownMoney(wallet.after, hidden)}</span></div>)}<small>{preview.combinedDelta === 0 ? 'Combined balance unchanged' : 'Combined balance change: ' + shownMoney(preview.combinedDelta, hidden)}</small></div>}{error && <p className="form-error" role="alert">{error}</p>}</div><div className="modal-actions"><button type="button" className="secondary" onClick={onClose}>Cancel</button><button className="primary" type="submit">{modal.id ? 'Save changes' : 'Save transaction'}</button></div></form></div></div>
 }
 
 function WalletModal({ form, setForm, error, setError, editing, onClose, onSave }) {
