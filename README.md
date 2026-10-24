@@ -1,6 +1,29 @@
 # Budsync
 
-Budsync is a phone-friendly PHP wallet tracker. It records income, expenses, adjustments, and transfers without connecting to a bank. Balances are calculated from opening balances and entries.
+Budsync is a phone-friendly finance tracker for managing money across multiple wallets. Record your activity in Philippine pesos, see where your money went, and keep a clear picture of each wallet's balance. Budsync does not connect to a bank or create transactions for you.
+
+[Open Budsync](https://budsync-6672e.web.app/)
+
+## What you can do
+
+- **Manage wallets.** Start with Personal, Organization, Savings, and E-Wallet, or add your own. Set opening balances; Budsync calculates current balances from those balances and your entries.
+- **Record money movement.** Add income, expenses, balance adjustments, and transfers between different wallets. Search and filter history, edit entries with a reason, and restore deleted entries. A transfer changes the two wallet balances without changing their combined total.
+- **Understand your finances.** The dashboard shows balances, monthly income and expenses, cash flow, spending categories, and recent activity. Insights includes category budgets and savings targets. These plans track progress; they do not move money.
+- **Keep receipts with expenses.** Take a photo or choose an image, adjust it if needed, and optionally read merchant, date, amount, and line items with on-device OCR. Confirm the details before saving. You can also record an amount now and attach its image later without deducting it twice.
+- **Use it on a phone.** Budsync has a responsive layout, light and dark themes, and an installable app shell. Records remain available on the device while offline.
+
+## Your data
+
+Budsync saves wallet records and receipt images in your browser first. You can use it as a guest without an account. If you sign up or log in, Firebase syncs your wallet records across devices. Google Drive is a separate connection for receipt folders and images; the Receipts page shows whether an image is saved locally, waiting to upload, or in Drive.
+
+You can download a JSON backup of wallet records or export transactions as CSV in **Settings → Data & backup**. Receipt images are not included in those exports or in Firebase account sync. Download important images individually or connect Google Drive before clearing browser data. If devices make conflicting account changes, Budsync asks you to choose which copy to keep.
+
+## Get started
+
+1. Choose zero or sample opening balances when you first open Budsync. Sample balances are labeled for exploration.
+2. Add a wallet transaction. The form previews how the selected wallet balances will change before you save.
+3. Create a receipt folder if you want to scan or attach images to expenses.
+4. Open **Settings → Connections** when you want account sync or Google Drive receipt backup.
 
 ## Run locally
 
@@ -9,65 +32,14 @@ npm install
 npm run dev
 ```
 
-Open the Vite URL. A new workspace asks whether to start at ₱0 or explore with sample opening balances. Workspaces save in IndexedDB. Older valid `budsync-v1` local-storage snapshots are migrated into the guest workspace.
+Open the URL printed by Vite. Copy `.env.example` to `.env.local` if you want to configure Firebase account sync or Google Drive on localhost. Google Drive requires a Google OAuth Web client whose authorized JavaScript origins include the local URL. The browser build uses the public client ID, never a client secret.
 
-## Finance interface
-
-The responsive dashboard has a balance overview, actual monthly income and expenses, a selectable cash-flow chart, spending categories, wallet summaries, and recent activity. **Insights** adds monthly category budgets and wallet-based savings targets. Targets display progress without moving money. The mobile layout uses a bottom navigation dock and transaction sheet; the theme button switches between light and dark modes and remembers the choice. Motion respects reduced-motion settings.
-
-Budgets and goals are optional fields in the existing V2 JSON backup and sync snapshot. Older backups still load with empty plans.
-
-## Receipt folders and scanner
-
-Open **Receipts**, create a folder, and choose the wallet that pays for its expenses. **Add amount** records a manual expense immediately. Edit that record later to attach a receipt image without deducting the amount a second time. **Scan or upload** creates a new expense from a photo or image. The image is prepared automatically; use **Read details from image** for OCR suggestions or **Adjust image** to change the crop, rotation, and enhancement. Review the merchant, date, and amount before saving. A folder's optional comparison budget shows remaining or overspent amounts but does not move money.
-
-Receipt images and folder records save in this device's IndexedDB. Deleting a record or folder reverses its linked wallet expenses; editing a folder's wallet moves those expenses to the new wallet. OCR also suggests line items and flags possible duplicate receipts for review. The OCR worker and English model are bundled locally and cached for offline use. Receipt images are not included in JSON backups or account sync. Camera access requires localhost or HTTPS and a browser that supports camera capture.
-
-## Google Drive receipts
-
-Drive access is a separate connection in **Settings**. When connected, Budsync uploads receipt data and images into `Budsync/<wallet name>/<folder name>/`, using JSON files for folder and receipt details and JPG files for images. It checks Drive while the app is visible, downloads newer folder and receipt details to each device, and uploads local changes. Deletions leave a marker for other devices and move the old Drive files to Trash. **Sync receipts now** runs both directions; **Download Drive changes** checks Drive without uploading. Receipt expenses are repaired from the local receipt copy if a save was interrupted. A JSON backup restore removes local receipts outside the restored transaction set and prevents older Drive receipts from reappearing. Custom wallets must have matching IDs on the other device, usually by signing into the same Budsync account or restoring its JSON backup first. Drive access lasts only until Google's browser token expires, so reconnect to resume synchronization. Keep a local backup before clearing browser data.
-
-To enable Drive on localhost:
-
-1. In [Google Cloud Console](https://console.cloud.google.com/), create or select a project. Enable **Google Drive API** under **APIs & Services > Library**.
-2. Configure the OAuth consent screen (Google Auth Platform > Branding/Audience/Data Access). Add the `https://www.googleapis.com/auth/drive.file` scope. If the app is in testing mode, add your Google account as a test user.
-3. Create an OAuth **Web application** client under **Clients**. Add `http://localhost:5173` to **Authorized JavaScript origins**. Add your actual Vite origin too if its port differs. This browser token flow needs no redirect URI.
-4. Copy `.env.example` to `.env.local` if needed, set `VITE_GOOGLE_CLIENT_ID` to that Web Client ID, and restart `npm run dev`. Keep your Firebase values if present.
-5. Open **Settings > Connect Google Drive** and approve access. A `Budsync` folder will be created after the first upload. Connect the same Google account on another device to synchronize its local receipt copy.
-
-For the Firebase Hosting site, add `https://budsync-6672e.web.app` to the same OAuth Web client's **Authorized JavaScript origins**. Put that client's ID in `VITE_GOOGLE_CLIENT_ID` in `.env.local` before running `npm run build`, then deploy `dist` with `firebase deploy --only hosting --project budsync-6672e`. Vite embeds the ID at build time, so a new build and deployment are required after adding it. Firebase account sign-in alone does not grant Google Drive access; connect Drive separately in **Settings**.
-
-The `drive.file` permission lets Budsync manage files it creates; the OAuth access token stays in memory. Do not place an OAuth client secret in the browser configuration.
-
-## Firebase account sync
-
-Budsync uses Firebase Authentication for email/password accounts and Firebase Realtime Database for revisioned wallet snapshots. Local IndexedDB saving works without Firebase configuration. To connect your Firebase project:
-
-1. In [Firebase Console](https://console.firebase.google.com/), create a project and register a **Web app**. Copy its `apiKey`, `authDomain`, `projectId`, and `appId` into the matching `VITE_FIREBASE_*` entries in `.env.local` (see `.env.example`). These are web app identifiers, not a service account key.
-2. Under **Authentication > Sign-in method**, enable **Email/Password**. Under **Settings > Authorized domains**, add your eventual `*.pages.dev` hostname and any custom domain. `localhost` may also need adding for local sign-in.
-3. Create a **Realtime Database**. Copy its exact URL into `VITE_FIREBASE_DATABASE_URL`. In **Realtime Database > Rules**, publish the contents of `database.rules.json`; the rules permit each signed-in user to read and update only their own revisioned workspace. Do not leave the database in public test mode.
-4. Restart `npm run dev`, create a Firebase account in **Settings**, and verify a wallet change syncs after refresh. The app stores snapshots at `workspaces/<Firebase uid>`.
-
-Settings has separate **Login** and **Sign up** forms and shows **Log out** when an account is active. Guest and account records stay separate. **Copy guest data here** and **Copy previous account data** show a review before replacing the Firebase account copy. Account changes save locally first and sync when online. While open, the app checks for other-device changes every four seconds and on return or reconnection. Conflicting edits require choosing one copy; download a JSON backup before replacing either copy. Firebase's single-string snapshot limit is 10 MB; Budsync stops uploads before that limit and keeps the local copy.
-
-### Moving an existing Supabase account
-
-Supabase passwords and user IDs do not transfer to Firebase automatically. Before leaving the old deployment, sign in there and download the latest JSON backup from **Settings**. Create a new Firebase account, then restore that backup. On the same browser origin, **Copy previous account data** can also import the last locally saved Supabase workspace, but it may be older than the remote copy. Receipt images are separate: connect the same Google Drive account after restoring wallets, then restore missing receipts. Keep the previous Supabase project and Vercel deployment until you have checked the Firebase balances and receipts on the new site.
-
-## Cloudflare Pages
-
-Connect this Git repository in **Cloudflare > Workers & Pages > Create > Pages**. Set the build command to `npm run build` and the output directory to `dist`. Add all `VITE_FIREBASE_*` values from `.env.example` under **Settings > Environment variables** for production and preview; add `VITE_GOOGLE_CLIENT_ID` if using Drive. Deploy, then add the resulting `*.pages.dev` hostname to Firebase Authentication's authorized domains and Google OAuth's JavaScript origins. Cloudflare Pages serves this Vite single-page app directly; no server functions or Vercel configuration are required. Confirm sign-in, wallet sync, and receipt restore on the Pages URL before retiring the old deployment.
-
-## Phone and offline use
-
-Build and serve the app over HTTPS, then use the phone browser's **Add to Home Screen** or **Install app** action. The service worker caches the app shell after an online visit; IndexedDB holds records offline. Sync runs when the app is online, rather than relying on browser Background Sync support. Keep an exported JSON backup outside the device in case browser data is cleared. JSON backups are plain text, so store them privately.
-
-## Checks
+## Check a change
 
 ```sh
-npm run test
+npm test
 npm run lint
 npm run build
 ```
 
-Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for the money, receipt, Drive, backup, and two-device checks before each deployment. Physical Android and iPhone camera testing remains to be done.
+Use [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) for phone, offline, receipt, and two-device checks before deploying.
