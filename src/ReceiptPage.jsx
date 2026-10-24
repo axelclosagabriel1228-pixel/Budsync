@@ -14,7 +14,7 @@ const fullCrop = { left: 0, right: 100, top: 0, bottom: 100 }
 const makeId = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
 const blankReceipt = () => ({ merchant: '', date: today(), amount: '', note: '', reason: '' })
 
-function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemoved, onFolderWalletChanged, onDriveSync, driveConnected, refreshKey, hidden }) {
+function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemoved, onFolderWalletChanged, onDriveSync, driveConnected, driveAvailable, onOpenSettings, refreshKey, hidden }) {
   const displayMoney = (value) => hidden ? '₱ ••••••' : php(value)
   const [folders, setFolders] = useState([])
   const [receipts, setReceipts] = useState([])
@@ -338,7 +338,7 @@ function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemove
   const activeWallets = wallets.filter((wallet) => !wallet.archived)
   return <div className="receipt-page">
     <div className="page-head"><div><div className="eyebrow">LOCAL RECEIPT RECORDS</div><h1>Receipt folders</h1><p>Scan, review, and record receipts against a wallet.</p></div></div>
-    <p className="receipt-local-note">Images save on this device{driveConnected ? ' and upload to your connected Google Drive' : '; connect Google Drive in Data & account to upload and restore them'}. Each confirmed expense deducts once; attaching an image does not deduct it again.</p>
+    <p className="receipt-local-note">Images save on this device{driveConnected ? ' and upload to your connected Google Drive' : driveAvailable ? '; connect Google Drive in Settings to upload and restore them' : '; Google Drive uploads are not set up for this site'}. {!driveConnected && <button type="button" onClick={onOpenSettings}>Open Settings</button>} Each confirmed expense deducts once; attaching an image does not deduct it again.</p>
     {error && <p className="error-banner" role="alert">{error}</p>}
     {notice && <p className="notice-banner" role="status">{notice}</p>}
     <div className="receipt-layout">

@@ -98,7 +98,17 @@ export async function restoreFromDrive(token, scope, wallets, entryIds = null, s
         const localReceipt = receiptById.get(idOf(file))
         if (localReceipt && (file.appProperties?.budsyncRevision || '') <= stamp(localReceipt)) {
           if (allowed(localReceipt)) hasIncludedReceipt = true
-          if (localFolder?.walletId !== currentFolder.walletId && allowed(localReceipt)) restored.push({ receipt: localReceipt, folder: currentFolder })
+          let currentReceipt = localReceipt
+          const image = match(files, 'receiptImage', localReceipt.id)
+          if (allowed(localReceipt) && !localReceipt.blob && image &&
+            (image.appProperties?.budsyncRevision || '') >= stamp(localReceipt)) {
+            currentReceipt = { ...localReceipt, blob: await downloadFile(token, image.id) }
+            await storage.putReceipt(scope, currentReceipt)
+            receiptById.set(currentReceipt.id, currentReceipt)
+            restored.push({ receipt: currentReceipt, folder: currentFolder })
+          } else if (localFolder?.walletId !== currentFolder.walletId && allowed(localReceipt)) {
+            restored.push({ receipt: currentReceipt, folder: currentFolder })
+          }
           continue
         }
         const receipt = JSON.parse(await (await downloadFile(token, file.id)).text())

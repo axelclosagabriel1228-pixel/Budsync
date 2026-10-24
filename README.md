@@ -35,6 +35,8 @@ To enable Drive on localhost:
 4. Copy `.env.example` to `.env.local` if needed, set `VITE_GOOGLE_CLIENT_ID` to that Web Client ID, and restart `npm run dev`. Keep your Firebase values if present.
 5. Open **Settings > Connect Google Drive** and approve access. A `Budsync` folder will be created after the first upload. Connect the same Google account on another device to synchronize its local receipt copy.
 
+For the Firebase Hosting site, add `https://budsync-6672e.web.app` to the same OAuth Web client's **Authorized JavaScript origins**. Put that client's ID in `VITE_GOOGLE_CLIENT_ID` in `.env.local` before running `npm run build`, then deploy `dist` with `firebase deploy --only hosting --project budsync-6672e`. Vite embeds the ID at build time, so a new build and deployment are required after adding it. Firebase account sign-in alone does not grant Google Drive access; connect Drive separately in **Settings**.
+
 The `drive.file` permission lets Budsync manage files it creates; the OAuth access token stays in memory. Do not place an OAuth client secret in the browser configuration.
 
 ## Firebase account sync

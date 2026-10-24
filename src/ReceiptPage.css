@@ -1,5 +1,6 @@
 .receipt-page { min-width: 0; }
 .receipt-local-note { margin: -8px 0 22px; color: var(--muted); font-size: 12px; }
+.receipt-local-note button { padding: 0; border: 0; background: none; color: var(--indigo); font: inherit; font-weight: 800; text-decoration: underline; cursor: pointer; }
 .receipt-layout { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); gap: 16px; align-items: start; }
 .receipt-folders, .receipt-records { min-width: 0; padding: 24px; }
 .receipt-panel-head, .receipt-add-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }

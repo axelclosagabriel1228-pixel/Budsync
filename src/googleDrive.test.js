@@ -145,3 +145,45 @@ test('a receipt is confirmed only after its metadata and image reach Drive', asy
     await assert.rejects(syncToDrive('token', 'guest', [{ id: 'wallet-1', name: 'Personal' }], storage), /Image upload failed/)
   } finally { globalThis.fetch = original }
 })
+
+test('a later Drive image fills a local receipt with the same metadata revision', async () => {
+  const original = globalThis.fetch
+  const revision = '2026-10-24T10:00:00Z'
+  const folder = { id: 'folder-1', walletId: 'wallet-1', name: 'Food', createdAt: revision }
+  let receipt = { id: 'receipt-1', entryId: 'entry-1', folderId: folder.id, amount: 75,
+    createdAt: revision, blob: null }
+  const storage = {
+    listReceiptFolders: async () => [folder],
+    listReceipts: async () => [receipt],
+    listDriveDeletes: async () => [],
+    putReceipt: async (_scope, item) => { receipt = item },
+  }
+  globalThis.fetch = async (value) => {
+    const url = new URL(value)
+    if (url.searchParams.get('alt') === 'media') {
+      return url.pathname.endsWith('folder-meta')
+        ? new Response(JSON.stringify(folder))
+        : new Response('image', { headers: { 'Content-Type': 'image/jpeg' } })
+    }
+    const query = url.searchParams.get('q') || ''
+    if (query.includes('name =')) return Response.json({ files: [{ id: 'root' }] })
+    if (query.includes("'root' in parents")) return Response.json({ files: [
+      { id: 'wallet-file', appProperties: { budsyncKind: 'wallet', budsyncId: 'wallet-1' } },
+    ] })
+    if (query.includes("'wallet-file' in parents")) return Response.json({ files: [
+      { id: 'folder-file', appProperties: { budsyncKind: 'folder', budsyncId: folder.id } },
+    ] })
+    if (query.includes("'folder-file' in parents")) return Response.json({ files: [
+      { id: 'folder-meta', appProperties: { budsyncKind: 'folderMeta', budsyncId: folder.id } },
+      { id: 'receipt-meta', appProperties: { budsyncKind: 'receiptMeta', budsyncId: receipt.id, budsyncRevision: revision } },
+      { id: 'receipt-image', appProperties: { budsyncKind: 'receiptImage', budsyncId: receipt.id, budsyncRevision: revision } },
+    ] })
+    throw new Error(`Unexpected Drive URL: ${url}`)
+  }
+  try {
+    const result = await restoreFromDrive('token', 'guest', [{ id: 'wallet-1' }], null, storage)
+    assert.equal(await receipt.blob.text(), 'image')
+    assert.equal(result.restored.length, 1)
+    assert.equal(result.restored[0].receipt.id, receipt.id)
+  } finally { globalThis.fetch = original }
+})
