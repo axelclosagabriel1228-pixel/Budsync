@@ -75,6 +75,7 @@
 .import-label { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 11px; font-weight: 800; color: #616161; }
 .import-label input { max-width: 100%; font-size: 11px; }
 .data-card .form-error { margin-top: 14px; color: #656565; }
+.data-card .account-confirmation { padding: 12px 14px; border: 1px solid #a7d8bd; border-radius: 8px; background: #edf8f1; color: #236342; font-weight: 700; }
 .restore-review { margin-top: 18px; padding: 16px; border: 1px solid #d7d7d7; background: #f5f5f5; border-radius: 9px; }
 .restore-review strong, .restore-review span { display: block; }
 .restore-review strong { font-size: 12px; }
@@ -112,6 +113,9 @@
 .loading-screen { min-height: 100dvh; display: grid; place-items: center; color: #656565; font-size: 14px; }
 .sync-state { display: inline-block; border-radius: 20px; background: #f1f1f1; color: #5c5c5c !important; padding: 7px 11px; font-weight: 800; }
 .auth-form { display: grid; gap: 13px; max-width: 420px; }
+.auth-tabs { display: flex; gap: 8px; margin: 18px 0; }
+.auth-tabs button { min-height: 44px; padding: 0 18px; border: 1px solid #e5e5e5; border-radius: 8px; background: #ffffff; color: #616161; font-size: 12px; font-weight: 800; }
+.auth-tabs button.selected { background: #555555; border-color: #555555; color: #ffffff; }
 .auth-form label { display: grid; gap: 6px; color: #616161; font-size: 11px; font-weight: 800; }
 .auth-form input { width: 100%; min-height: 44px; border: 1px solid #e5e5e5; border-radius: 7px; padding: 9px 11px; color: #313131; font-size: 16px; }
 .auth-form .form-error { margin: 0; }

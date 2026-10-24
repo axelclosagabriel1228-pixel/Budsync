@@ -181,6 +181,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .wallet-total { border-radius: 21px; background: radial-gradient(circle at 88% 4%, rgba(203,203,203,.35), transparent 31%), linear-gradient(120deg, #323232, #646464); }
 .panel, .data-card { border-color: var(--line); border-radius: 19px; background: var(--surface); box-shadow: var(--shadow); }
 .data-card h2, .history-head h2 { color: var(--ink); }.data-card p, .history-head p { color: var(--muted); }
+.data-card .account-confirmation { border-color: var(--line); background: var(--surface-soft); color: var(--ink); }
 .empty strong { color: var(--ink); }.empty p { color: var(--muted); }.empty button { color: var(--indigo); }.empty > span { background: var(--surface-soft); color: var(--indigo); }
 .transaction { border-color: var(--line); gap: 14px; padding: 16px 21px; }.transaction-info strong { color: var(--ink); font-size: 12px; }.transaction-info span, .transaction-info small, .transaction-amount span { color: var(--muted); }.transaction-amount strong.positive { color: var(--emerald); }.transaction-amount strong.negative { color: var(--coral); }
 .transaction-info .edit-note { color: var(--muted); }
@@ -192,6 +193,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 .report-note, .report-wallet-row span { color: var(--muted); }.report-row, .report-wallet-row { border-color: var(--line); color: var(--muted); }.report-row strong, .report-wallet-row strong { color: var(--ink); }.report-track { background: var(--surface-soft); }.report-track i { background: linear-gradient(90deg, #646464, #a5a5a5); }
 .restore-review { background: var(--surface-soft); border-color: var(--violet); }.restore-review strong { color: var(--ink); }.restore-review span, .restore-review p { color: var(--muted); }.sync-state { background: rgba(100,100,100,.1); color: var(--indigo) !important; }.conflict-list { color: var(--muted); }
 .auth-form label, .import-label { color: var(--muted); }
+.auth-tabs button { background: var(--surface); border-color: var(--line); color: var(--muted); }
+.auth-tabs button.selected { background: var(--ink); border-color: var(--ink); color: var(--surface); }
 .modal-backdrop { background: rgba(18,18,18,.57); backdrop-filter: blur(7px); -webkit-backdrop-filter: blur(7px); animation: backdrop-in 220ms ease both; }
 .modal { border: 1px solid var(--line); border-radius: 23px; background: var(--surface); box-shadow: var(--glass-shadow); animation: modal-in 280ms var(--ease) both; }
 .modal-head h2 { color: var(--ink); }.modal-head p { color: var(--muted); }.modal-head > button { background: var(--surface-soft); color: var(--muted); }

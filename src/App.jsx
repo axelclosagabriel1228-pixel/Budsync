@@ -20,7 +20,7 @@ const navigation = [
   ['wallets', 'Wallets'],
   ['receipts', 'Receipts'],
   ['reports', 'Insights'],
-  ['account', 'Data & account'],
+  ['account', 'Settings'],
 ]
 const categories = {
   income: ['Salary', 'Business', 'Gift', 'Interest', 'Other income'],
@@ -84,6 +84,10 @@ function App() {
   const [conflict, setConflict] = useState(null)
   const [authEmail, setAuthEmail] = useState('')
   const [authPassword, setAuthPassword] = useState('')
+  const [authConfirm, setAuthConfirm] = useState('')
+  const [authMode, setAuthMode] = useState('login')
+  const [authError, setAuthError] = useState('')
+  const [authConfirmation, setAuthConfirmation] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
   const [pendingGuest, setPendingGuest] = useState(null)
   const [pendingPrevious, setPendingPrevious] = useState(null)
@@ -334,39 +338,67 @@ function App() {
       setConflict(null)
       if (remote) setSyncError('')
       setAuthPassword('')
-      setNotice('Signed in. Your account data is stored separately from guest data.')
+      setAuthConfirm('')
+      setAuthError('')
+      setAuthMode('login')
     } finally { setLoading(false) }
   }
 
-  async function submitAuth(event, mode) {
+  async function submitAuth(event) {
     event.preventDefault()
+    setAuthConfirmation('')
+    if (authMode === 'signup' && authPassword !== authConfirm) {
+      setAuthError('Passwords do not match.')
+      return
+    }
     setAuthBusy(true)
-    setError('')
+    setAuthError('')
     try {
-      const next = mode === 'signup' ? await signUp(authEmail.trim(), authPassword) : await signIn(authEmail.trim(), authPassword)
-      if (next) await openAccount(next)
-      else { setAuthPassword(''); setNotice('Check your email to confirm your account, then sign in.') }
-    } catch (cause) { setError(cause.message) }
+      const next = authMode === 'signup' ? await signUp(authEmail.trim(), authPassword) : await signIn(authEmail.trim(), authPassword)
+      if (next) {
+        await openAccount(next)
+        setAuthConfirmation(authMode === 'signup' ? 'Account created and logged in successfully.' : 'Logged in successfully.')
+      } else {
+        setAuthPassword('')
+        setAuthConfirm('')
+        setAuthConfirmation('Check your email to confirm your account, then log in.')
+      }
+    } catch (cause) { setAuthError(cause.message) }
     finally { setAuthBusy(false) }
+  }
+
+  function changeAuthMode(mode) {
+    setAuthMode(mode)
+    setAuthPassword('')
+    setAuthConfirm('')
+    setAuthError('')
+    setAuthConfirmation('')
   }
 
   async function leaveAccount() {
     setLoading(true)
-    driveSessionRef.current = null
-    setDriveSession(null)
-    setDriveStatus('')
-    pendingDriveReceipts.current.clear()
-    try { await persistQueue.current } catch { /* Keep the current workspace in memory. */ }
-    await signOut()
-    setSession(null)
-    setConflict(null)
-    setSyncError('')
-    setScope('guest')
-    setWorkspace(freshWorkspace())
+    setAuthConfirmation('')
     try {
-      setWorkspace(await reconcileLocalReceipts('guest', await readWorkspace('guest') || freshWorkspace(), false))
-      setNotice('Signed out. Guest data on this device is separate from your account.')
-    } catch (cause) { setStorageError(cause.message) }
+      try { await persistQueue.current } catch { /* Keep the current workspace in memory. */ }
+      await signOut()
+      driveSessionRef.current = null
+      setDriveSession(null)
+      setDriveStatus('')
+      pendingDriveReceipts.current.clear()
+      setSession(null)
+      setConflict(null)
+      setSyncError('')
+      setAuthPassword('')
+      setAuthConfirm('')
+      setAuthError('')
+      setAuthMode('login')
+      setScope('guest')
+      setWorkspace(freshWorkspace())
+      setAuthConfirmation('Logged out successfully. Guest data on this device is separate from your account.')
+      try {
+        setWorkspace(await reconcileLocalReceipts('guest', await readWorkspace('guest') || freshWorkspace(), false))
+      } catch (cause) { setStorageError(cause.message) }
+    } catch (cause) { setSyncError(`Log out failed: ${cause.message}`) }
     finally { setLoading(false) }
   }
 
@@ -751,7 +783,7 @@ function App() {
     <a className="skip-link" href="#main-content">Skip to content</a>
     <aside className="sidebar">
       <div className="sidebar-top"><button className="brand" type="button" aria-label="Budsync home" onClick={() => setPage('overview')}><span className="brand-icon">◉</span><span className="brand-word">budsync<span>.</span></span></button><button className="collapse-button" type="button" aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setSidebarCollapsed(!sidebarCollapsed)}><NavIcon name="menu" size={19} /></button></div>
-      <div className="mobile-header-actions"><button type="button" aria-label="Insights" onClick={() => setPage('reports')}><NavIcon name="reports" /></button><button type="button" aria-label={theme === 'dark' ? 'Use light theme' : 'Use dark theme'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}><NavIcon name={theme === 'dark' ? 'sun' : 'moon'} /></button><button type="button" aria-label="Data and account" onClick={() => setPage('account')}><NavIcon name="account" /></button></div>
+      <div className="mobile-header-actions"><button type="button" aria-label="Insights" onClick={() => setPage('reports')}><NavIcon name="reports" /></button><button type="button" aria-label={theme === 'dark' ? 'Use light theme' : 'Use dark theme'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}><NavIcon name={theme === 'dark' ? 'sun' : 'moon'} /></button><button type="button" aria-label="Settings" onClick={() => setPage('account')}><NavIcon name="account" /></button></div>
       <div className="side-content">
         <p className="nav-label">WORKSPACE</p>
         <nav aria-label="Desktop navigation">{navigation.map(([id, label]) => <button type="button" key={id} title={label} aria-current={page === id ? 'page' : undefined} className={page === id ? 'active' : ''} onClick={() => setPage(id)}><span className="nav-icon"><NavIcon name={id} /></span><span className="nav-text">{label}</span></button>)}</nav>
@@ -761,10 +793,10 @@ function App() {
       <div className="side-bottom"><span className="side-status-dot" /><div><strong>{syncStatus}</strong><small>{session ? 'Your account workspace' : 'Guest workspace · PHP only'}</small></div></div>
     </aside>
     <div className="main">
-      <header className="topbar"><div className="breadcrumb">Workspace <span>›</span> <strong>{navigation.find(([id]) => id === page)?.[1]}</strong></div><div className="top-right"><span className={'status' + (syncError || storageError ? ' status-error' : workspace.dirty ? ' status-pending' : '')} role="status"><i /> {syncStatus}</span><button className="top-icon-button" type="button" aria-label={theme === 'dark' ? 'Use light theme' : 'Use dark theme'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}><NavIcon name={theme === 'dark' ? 'sun' : 'moon'} size={18} /></button><button className="avatar" type="button" aria-label="Data and account" onClick={() => setPage('account')}>B</button></div></header>
+      <header className="topbar"><div className="breadcrumb">Workspace <span>›</span> <strong>{navigation.find(([id]) => id === page)?.[1]}</strong></div><div className="top-right"><span className={'status' + (syncError || storageError ? ' status-error' : workspace.dirty ? ' status-pending' : '')} role="status"><i /> {syncStatus}</span><button className="top-icon-button" type="button" aria-label={theme === 'dark' ? 'Use light theme' : 'Use dark theme'} onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}><NavIcon name={theme === 'dark' ? 'sun' : 'moon'} size={18} /></button><button className="avatar" type="button" aria-label="Settings" onClick={() => setPage('account')}>B</button></div></header>
       <main id="main-content" className="content" key={page}>
         <div className={'mobile-sync-pill' + (syncError || storageError ? ' status-error' : workspace.dirty ? ' status-pending' : '')} role="status"><i /> {syncStatus}</div>
-        {!saveAllowed && <div className="error-banner" role="alert">Saved data could not be read. It has not been replaced. Restore a backup in Data & account, or <button type="button" onClick={() => { setSaveAllowed(true); setNotice('Started with sample data.') }}>start fresh</button>.</div>}
+        {!saveAllowed && <div className="error-banner" role="alert">Saved data could not be read. It has not been replaced. Restore a backup in Settings, or <button type="button" onClick={() => { setSaveAllowed(true); setNotice('Started with sample data.') }}>start fresh</button>.</div>}
         {storageError && <div className="error-banner" role="alert">{storageError}</div>}
         {syncError && <div className="error-banner" role="alert">{syncError} <button type="button" onClick={() => setPage('account')}>Open sync settings</button></div>}
         {notice && <div className="notice-banner" role="status">{notice}<button type="button" onClick={() => setNotice('')} aria-label="Dismiss notice">×</button></div>}
@@ -804,18 +836,38 @@ function App() {
         {page === 'receipts' && <ReceiptPage scope={scope} wallets={data.wallets} entries={data.entries} onExpenseSaved={saveReceiptExpense} onExpensesRemoved={reverseReceiptExpenses} onFolderWalletChanged={changeReceiptFolderWallet} onDriveSync={requestReceiptDriveSync} driveConnected={Boolean(driveSession)} refreshKey={receiptRefresh} hidden={balanceHidden} />}
 
         {page === 'account' && <div className="data-page">
-          <div className="page-head"><div><div className="eyebrow">YOUR DATA</div><h1>Data & account</h1><p>Back up your records and manage sync across devices.</p></div></div>
+          <div className="page-head"><div><div className="eyebrow">YOUR SPACE</div><h1>Settings</h1><p>Manage your account, backups, and sync.</p></div></div>
+          <section className="data-card account-access"><h2>Account</h2>{authConfirmation && <p className="account-confirmation" role="status">{authConfirmation}</p>}{session ? <>
+            <p>Logged in as <strong>{session.user.email}</strong>. Your account records save on this device and sync when online.</p>
+            <p className="sync-state" role="status">{syncStatus}</p>
+            <div className="button-row"><button className="secondary" type="button" disabled={loading} onClick={leaveAccount}>Log out</button></div>
+          </> : <>
+            <p>Log in to sync your records across devices, or sign up for a new account. Guest records stay on this device until you choose to copy them into an account.</p>
+            {cloudReady ? <>
+              <div className="auth-tabs" role="group" aria-label="Account action">
+                <button type="button" className={authMode === 'login' ? 'selected' : ''} aria-pressed={authMode === 'login'} disabled={authBusy} onClick={() => changeAuthMode('login')}>Login</button>
+                <button type="button" className={authMode === 'signup' ? 'selected' : ''} aria-pressed={authMode === 'signup'} disabled={authBusy} onClick={() => changeAuthMode('signup')}>Sign up</button>
+              </div>
+              <form className="auth-form" onSubmit={submitAuth}>
+                <label>Email<input required type="email" autoComplete="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} /></label>
+                <label>Password<input required type="password" minLength="6" autoComplete={authMode === 'signup' ? 'new-password' : 'current-password'} value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} /></label>
+                {authMode === 'signup' && <label>Confirm password<input required type="password" minLength="6" autoComplete="new-password" value={authConfirm} onChange={(event) => setAuthConfirm(event.target.value)} /></label>}
+                {authError && <p className="form-error" role="alert">{authError}</p>}
+                <div className="button-row"><button className="primary" type="submit" disabled={authBusy}>{authBusy ? 'Please wait…' : authMode === 'signup' ? 'Create account' : 'Login'}</button></div>
+              </form>
+            </> : <p>Account access needs the Firebase web app values in <code>.env.local</code>.</p>}
+          </>}</section>
           <section className="data-card"><h2>Google Drive receipts</h2><p>Connect a Google account to upload and restore receipt folders and images. Budsync creates <code>Budsync / wallet name / folder name / files</code> in Drive. Deleted local receipts and folders move to Drive Trash on the next sync. Your local copy remains available while disconnected.</p>{googleClientId ? <div className="button-row"><button className="primary" type="button" disabled={driveBusy || !isOnline} onClick={connectDrive}>{driveSession ? 'Reconnect Google Drive' : 'Connect Google Drive'}</button><button className="secondary" type="button" disabled={driveBusy || !driveSession || !isOnline} onClick={uploadReceipts}>Sync receipts now</button><button className="secondary" type="button" disabled={driveBusy || !driveSession || !isOnline} onClick={restoreDrive}>Download Drive changes</button></div> : <p>Add <code>VITE_GOOGLE_CLIENT_ID</code> to <code>.env.local</code> and restart the app. The README has Google Cloud setup steps.</p>}{driveStatus && <p className="sync-state" role="status">{driveStatus}</p>}</section>
           <section className="data-card"><h2>Backup & export</h2><p>Download a JSON backup to restore wallet records later. Receipt images and folders stay on this device; download individual images from Receipts. CSV is for viewing transactions in a spreadsheet.</p><div className="button-row"><button className="primary" type="button" onClick={() => download('budsync-backup-' + localDate() + '.json', backupJson(data), 'application/json')}>Download backup</button><button className="secondary" type="button" onClick={() => download('budsync-transactions-' + localDate() + '.csv', transactionsCsv(data), 'text/csv;charset=utf-8')}>Export CSV</button></div></section>
           <section className="data-card"><h2>Restore a backup</h2><p>Choose a Budsync JSON backup. Review its contents before replacing this device’s records.</p><label className="import-label">Choose backup file<input type="file" accept=".json,application/json" onChange={chooseBackup} /></label>{error && <p className="form-error" role="alert">{error}</p>}{pendingBackup && <div className="restore-review"><strong>{pendingBackup.name}</strong><span>{pendingBackup.data.wallets.length} wallets · {pendingBackup.data.entries.length} transactions · {pendingBackup.data.budgets.length} budgets · {pendingBackup.data.goals.length} goals</span><p>Restoring replaces wallets, transactions, budgets, and goals. Local receipt folders and images without a matching receipt expense in this backup are removed, and those deletions sync to connected Google Drive. Download your current backup and any receipt images you need first.</p><div className="button-row"><button className="primary" type="button" onClick={restoreBackup}>Replace with this backup</button><button className="secondary" type="button" onClick={() => setPendingBackup(null)}>Cancel</button></div></div>}</section>
-          <section className="data-card"><h2>Account & sync</h2>{session ? <>
-            <p>Signed in as <strong>{session.user.email}</strong>. Changes save on this device first, then sync online. While the app is open, other-device changes appear automatically within a few seconds.</p>
+          {session && <section className="data-card"><h2>Account sync</h2>
+            <p>While the app is open, changes from other devices appear automatically within a few seconds.</p>
             <p className="sync-state" role="status">{syncStatus}</p>
-            <div className="button-row"><button className="secondary" type="button" disabled={syncing} onClick={() => checkCloud()}>Check for updates</button><button className="secondary" type="button" onClick={reviewGuest}>Copy guest data here</button><button className="secondary" type="button" onClick={reviewPreviousAccount}>Copy previous account data</button><button className="secondary" type="button" onClick={leaveAccount}>Sign out</button></div>
+            <div className="button-row"><button className="secondary" type="button" disabled={syncing} onClick={() => checkCloud()}>Check for updates</button><button className="secondary" type="button" onClick={reviewGuest}>Copy guest data here</button><button className="secondary" type="button" onClick={reviewPreviousAccount}>Copy previous account data</button></div>
             {pendingGuest && <div className="restore-review"><strong>Copy guest data into this account?</strong><span>{pendingGuest.wallets.length} wallets · {pendingGuest.entries.length} transactions</span><p>This replaces the account data on this device and queues it for sync. Download a backup of the current account first if you need it.</p><div className="button-row"><button className="primary" type="button" onClick={() => { editData(pendingGuest); setPendingGuest(null); setNotice('Guest records copied into your account and queued for sync.') }}>Copy guest data</button><button className="secondary" type="button" onClick={() => setPendingGuest(null)}>Cancel</button></div></div>}
             {pendingPrevious && <div className="restore-review"><strong>Copy saved data from {pendingPrevious.email}?</strong><span>{pendingPrevious.data.wallets.length} wallets · {pendingPrevious.data.entries.length} transactions</span><p>This is the last account copy saved on this device. It replaces the current Firebase workspace and uploads on the next sync. Export a backup first if you need the current workspace.</p><div className="button-row"><button className="primary" type="button" onClick={() => { editData(pendingPrevious.data); setPendingPrevious(null); setNotice('Previous account data copied into this Firebase account and queued for sync.') }}>Copy previous data</button><button className="secondary" type="button" onClick={() => setPendingPrevious(null)}>Cancel</button></div></div>}
             {conflict && <div className="restore-review" role="alert"><strong>Choose which copy to keep</strong><span>On this device: {data.wallets.length} wallets · {data.entries.length} transactions<br />In your account: {conflict.data.wallets.length} wallets · {conflict.data.entries.length} transactions</span><ul className="conflict-list">{changedRecords(data, conflict.data).slice(0, 12).map((change, index) => <li key={index}>{change}</li>)}</ul><p>Download a backup of this device before choosing the account copy. Choosing this device will replace the newer account copy.</p><div className="button-row"><button className="secondary" type="button" onClick={() => resolveConflict('cloud')}>Use account copy</button><button className="primary" type="button" onClick={() => resolveConflict('device')}>Upload this device copy</button></div></div>}
-          </> : <><p>Continue as a guest on this device, or sign in to sync your records with Firebase. Guest records stay separate until you choose to copy them into an account. Previous Supabase accounts require a new Firebase sign-up; use a JSON backup or the saved device copy to bring your data over.</p>{cloudReady ? <form className="auth-form" onSubmit={(event) => submitAuth(event, 'signin')}><label>Email<input required type="email" autoComplete="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} /></label><label>Password<input required type="password" minLength="6" autoComplete="current-password" value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} /></label>{error && <p className="form-error" role="alert">{error}</p>}<div className="button-row"><button className="primary" type="submit" disabled={authBusy}>Sign in</button><button className="secondary" type="button" disabled={authBusy || !authEmail || authPassword.length < 6} onClick={(event) => submitAuth(event, 'signup')}>Create account</button></div></form> : <p>Cloud sync needs the Firebase web app values in <code>.env.local</code>.</p>}</>}</section>
+          </section>}
         </div>}
       </main>
     </div>
