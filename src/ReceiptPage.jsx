@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+﻿import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { detectReceiptEdges, prepareReceiptImage, readReceipt } from './receiptScanner.js'
 import { possibleDuplicateReceipts } from './receiptDuplicates.js'
-import { listReceiptFolders, listReceipts, putReceipt, putReceiptFolder, removeReceipt, removeReceiptFolder } from './receiptStore.js'
+import { clearDriveDelete, listReceiptFolders, listReceipts, putReceipt, putReceiptFolder, removeReceipt, removeReceiptFolder } from './receiptStore.js'
 import './ReceiptPage.css'
 
 const php = (value) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP' }).format(value)
@@ -14,7 +14,8 @@ const fullCrop = { left: 0, right: 100, top: 0, bottom: 100 }
 const makeId = () => crypto.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`
 const blankReceipt = () => ({ merchant: '', date: today(), amount: '', note: '', reason: '' })
 
-function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemoved, onFolderWalletChanged, onDriveSync, driveConnected }) {
+function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemoved, onFolderWalletChanged, onDriveSync, driveConnected, refreshKey, hidden }) {
+  const displayMoney = (value) => hidden ? '₱ ••••••' : php(value)
   const [folders, setFolders] = useState([])
   const [receipts, setReceipts] = useState([])
   const [folderId, setFolderId] = useState('')
@@ -51,7 +52,7 @@ function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemove
       setFolderId((current) => nextFolders.some((folder) => folder.id === current) ? current : nextFolders[0]?.id || '')
     }).catch((cause) => { if (active) setError(`Receipt storage could not be read: ${cause.message}`) })
     return () => { active = false }
-  }, [scope])
+  }, [scope, refreshKey])
 
   useEffect(() => () => {
     streamRef.current?.getTracks().forEach((track) => track.stop())
@@ -220,7 +221,8 @@ function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemove
     try {
       await putReceiptFolder(scope, next)
       if (editingFolder && folder.walletId !== next.walletId) {
-        onFolderWalletChanged(folderReceipts.map((receipt) => receipt.entryId), next.walletId, folderForm.reason.trim())
+        try { await onFolderWalletChanged(folderReceipts.map((receipt) => receipt.entryId), next.walletId, folderForm.reason.trim()) }
+        catch (cause) { await putReceiptFolder(scope, folder); throw cause }
       }
       await reload()
       onDriveSync()
@@ -246,7 +248,13 @@ function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemove
     setBusy('Deleting folder…')
     try {
       await removeReceiptFolder(scope, folder.id, folderReceipts.map((receipt) => receipt.id))
-      onExpensesRemoved(folderReceipts.map((receipt) => receipt.entryId))
+      try { await onExpensesRemoved(folderReceipts.map((receipt) => receipt.entryId)) }
+      catch (cause) {
+        await putReceiptFolder(scope, folder)
+        for (const receipt of folderReceipts) await putReceipt(scope, receipt)
+        await clearDriveDelete(scope, 'folder', folder.id)
+        throw cause
+      }
       await reload()
       onDriveSync()
       setEditingFolder(false)
@@ -280,12 +288,20 @@ function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemove
     setBusy('Saving receipt and wallet expense…')
     try {
       await putReceipt(scope, receipt)
-      onExpenseSaved(receipt, folder, editingReceipt)
+      try { await onExpenseSaved(receipt, folder, editingReceipt) }
+      catch (cause) {
+        if (editingReceipt) await putReceipt(scope, editingReceipt)
+        else await removeReceipt(scope, receipt.id, false)
+        throw cause
+      }
       await reload()
-      onDriveSync()
       setScanOpen(false)
       setImage(null)
-      setNotice(`Expense saved. ${php(amount)} deducted from ${wallets.find((wallet) => wallet.id === folder.walletId)?.name}.`)
+      const localMessage = `Expense saved locally. ${displayMoney(amount)} deducted from ${wallets.find((wallet) => wallet.id === folder.walletId)?.name}.`
+      setNotice(driveConnected ? `${localMessage} Uploading receipt to Google Drive…` : localMessage)
+      if (driveConnected) onDriveSync(receipt, (cause) => setNotice(cause
+        ? `Expense saved locally. Google Drive did not confirm this receipt: ${cause}`
+        : 'Receipt saved to Google Drive. Its wallet expense is recorded.'))
       setError('')
     } catch (cause) { setError(`Receipt could not be saved: ${cause.message}`) }
     finally { setBusy('') }
@@ -296,7 +312,12 @@ function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemove
     setBusy('Deleting receipt…')
     try {
       await removeReceipt(scope, receipt.id)
-      onExpensesRemoved([receipt.entryId])
+      try { await onExpensesRemoved([receipt.entryId]) }
+      catch (cause) {
+        await putReceipt(scope, receipt)
+        await clearDriveDelete(scope, 'receipt', receipt.id)
+        throw cause
+      }
       await reload()
       onDriveSync()
       setNotice('Receipt deleted and its wallet expense reversed.')
@@ -336,12 +357,12 @@ function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemove
       <section className="receipt-records data-card">
         {folder ? <>
           <div className="receipt-panel-head"><div><span className="widget-kicker">FOLDER RECORD</span><h2>{folder.name}</h2><p>Expenses are deducted from {wallets.find((wallet) => wallet.id === folder.walletId)?.name || 'the assigned wallet'}.</p></div><div className="receipt-toolbar"><button className="secondary" type="button" onClick={beginFolderEdit}>Edit folder</button><button className="secondary" type="button" onClick={deleteFolder}>Delete</button></div></div>
-          <div className="receipt-summary"><div><small>Recorded spending</small><strong>{php(folderTotal)}</strong></div><div><small>Comparison budget</small><strong>{folder.budget ? php(folder.budget) : 'No limit'}</strong></div><div><small>{remaining === null ? 'Records' : remaining < 0 ? 'Over budget' : 'Remaining'}</small><strong>{remaining === null ? folderReceipts.length : php(Math.abs(remaining))}</strong></div></div>
+          <div className="receipt-summary"><div><small>Recorded spending</small><strong>{displayMoney(folderTotal)}</strong></div><div><small>Comparison budget</small><strong>{folder.budget ? displayMoney(folder.budget) : 'No limit'}</strong></div><div><small>{remaining === null ? 'Records' : remaining < 0 ? 'Over budget' : 'Remaining'}</small><strong>{remaining === null ? folderReceipts.length : displayMoney(Math.abs(remaining))}</strong></div></div>
           <div className="receipt-add-row"><h3>Expense records</h3><div className="receipt-toolbar"><button className="secondary" type="button" onClick={() => openScanner(null, true)}>+ Add amount</button><button className="primary" type="button" onClick={() => openScanner()}>+ Scan or upload</button></div></div>
           {folderReceipts.length ? <div className="receipt-items">{folderReceipts.map((receipt) => {
             const entry = entryById.get(receipt.entryId)
             const active = entry && !entry.deletedAt
-            return <article className="receipt-item" key={receipt.id}><ReceiptThumbnail key={`${receipt.id}:${receipt.updatedAt}`} receipt={receipt} /><div className="receipt-item-main"><strong>{receipt.merchant}</strong><span>{receipt.date} · {active ? 'Wallet expense recorded' : 'Expense removed from history'} · {receipt.blob ? 'Image attached' : 'No image yet'}</span>{receipt.scanned?.amount && receipt.scanned.amount !== (active ? entry.amount : receipt.amount) && <small>Scan read {php(receipt.scanned.amount)} · Confirmed {php(active ? entry.amount : receipt.amount)}</small>}{receipt.note && <small>{receipt.note}</small>}</div><strong className="receipt-item-amount">{active ? php(entry.amount) : '—'}</strong><div className="receipt-item-actions"><button type="button" onClick={() => openScanner(receipt)}>Edit / attach</button>{receipt.blob && <button type="button" onClick={() => downloadReceipt(receipt)}>Download</button>}<button type="button" onClick={() => deleteReceipt(receipt)}>Delete</button></div></article>
+            return <article className="receipt-item" key={receipt.id}><ReceiptThumbnail key={`${receipt.id}:${receipt.updatedAt}`} receipt={receipt} /><div className="receipt-item-main"><strong>{receipt.merchant}</strong><span>{receipt.date} · {active ? 'Wallet expense recorded' : 'Expense removed from history'} · {receipt.blob ? 'Image attached' : 'No image yet'}</span>{receipt.scanned?.amount && receipt.scanned.amount !== (active ? entry.amount : receipt.amount) && <small>Scan read {displayMoney(receipt.scanned.amount)} · Confirmed {displayMoney(active ? entry.amount : receipt.amount)}</small>}{receipt.note && <small>{receipt.note}</small>}</div><strong className="receipt-item-amount">{active ? displayMoney(entry.amount) : '—'}</strong><div className="receipt-item-actions"><button type="button" onClick={() => openScanner(receipt)}>Edit / attach</button>{receipt.blob && <button type="button" onClick={() => downloadReceipt(receipt)}>Download</button>}<button type="button" onClick={() => deleteReceipt(receipt)}>Delete</button></div></article>
           })}</div> : <p className="receipt-empty-copy">No records yet. Add an amount now or capture a receipt to create an expense.</p>}
         </> : <div className="empty"><strong>Choose or create a folder</strong><p>Each folder connects its receipt expenses to one wallet.</p></div>}
       </section>
@@ -351,9 +372,9 @@ function ReceiptPage({ scope, wallets, entries, onExpenseSaved, onExpensesRemove
         {cameraOn && <div className="receipt-camera"><video ref={videoRef} autoPlay playsInline muted /><div className="receipt-camera-actions"><button className="primary" type="button" onClick={captureCamera}>Capture receipt</button><button className="secondary" type="button" onClick={stopCamera}>Stop camera</button></div></div>}
         {previewUrl && <><div className="receipt-preview"><img src={previewUrl} alt="Receipt ready to crop" /><div className="receipt-crop-box" style={{ left: `${crop.left}%`, top: `${crop.top}%`, width: `${crop.right - crop.left}%`, height: `${crop.bottom - crop.top}%` }} /></div><div className="receipt-crop-controls">{['left', 'right', 'top', 'bottom'].map((side) => <label key={side}>{side}<input type="range" min="0" max="100" value={crop[side]} onChange={(event) => { setCrop({ ...crop, [side]: Number(event.target.value) }); setSavedBlob(null) }} /></label>)}</div><div className="receipt-image-options"><button className="secondary" type="button" onClick={() => { setRotation((value) => (value + 90) % 360); setSavedBlob(null) }}>Rotate 90°</button><label><input type="checkbox" checked={enhance} onChange={(event) => { setEnhance(event.target.checked); setSavedBlob(null) }} /> Enhance black and white</label><button className="secondary" type="button" onClick={() => { setCrop(fullCrop); setSavedBlob(null) }}>Reset crop</button>{editingReceipt?.blob && <button className="secondary" type="button" onClick={() => { setImage(null); setSavedBlob(null); setImageHash(''); setScanned(null); setManualMode(true) }}>Remove image</button>}</div><div className="receipt-form-actions"><button className="primary" type="button" disabled={Boolean(busy)} onClick={() => prepareAndRead(true)}>Crop and read details</button><button className="secondary" type="button" disabled={Boolean(busy)} onClick={() => prepareAndRead(false)}>Crop only</button></div></>}
         {busy && <p className="receipt-status" role="status">{busy}</p>}
-        {scanned && <div className="receipt-comparison"><strong>Detected details · compare with the receipt</strong><span>Merchant: {scanned.merchant || 'Unclear'}</span><span>Date: {scanned.date || 'Unclear'}</span><span>Amount: {scanned.amount ? php(scanned.amount) : 'Unclear'}</span></div>}
-        {scanned?.lineItems?.length > 0 && <div className="receipt-line-items"><strong>Detected line items</strong>{scanned.lineItems.map((item, index) => <div key={`${item.description}-${index}`}><span>{item.description}</span><b>{php(item.amount)}</b></div>)}<div className="receipt-line-total"><span>Items total</span><b>{php(scanned.lineItemTotal)}</b></div>{scanned.amount && <small>{Math.abs(scanned.amount - scanned.lineItemTotal) < .01 ? 'Items match the detected receipt total.' : `Items differ from the detected total by ${php(Math.abs(scanned.amount - scanned.lineItemTotal))}. Check discounts, tax, and OCR.`}</small>}</div>}
-        {duplicates.length > 0 && <div className="receipt-duplicate" role="alert"><strong>Possible duplicate expense</strong><p>{duplicates.map((item) => `${item.merchant} · ${item.date} · ${php(item.amount)}`).join(' / ')}</p><label><input type="checkbox" checked={approvedDuplicateKey === duplicateKey} onChange={(event) => setApprovedDuplicateKey(event.target.checked ? duplicateKey : '')} /> I checked; this is a separate expense</label></div>}
+        {scanned && <div className="receipt-comparison"><strong>Detected details · compare with the receipt</strong><span>Merchant: {scanned.merchant || 'Unclear'}</span><span>Date: {scanned.date || 'Unclear'}</span><span>Amount: {scanned.amount ? displayMoney(scanned.amount) : 'Unclear'}</span></div>}
+        {scanned?.lineItems?.length > 0 && <div className="receipt-line-items"><strong>Detected line items</strong>{scanned.lineItems.map((item, index) => <div key={`${item.description}-${index}`}><span>{item.description}</span><b>{displayMoney(item.amount)}</b></div>)}<div className="receipt-line-total"><span>Items total</span><b>{displayMoney(scanned.lineItemTotal)}</b></div>{scanned.amount && <small>{Math.abs(scanned.amount - scanned.lineItemTotal) < .01 ? 'Items match the detected receipt total.' : `Items differ from the detected total by ${displayMoney(Math.abs(scanned.amount - scanned.lineItemTotal))}. Check discounts, tax, and OCR.`}</small>}</div>}
+        {duplicates.length > 0 && <div className="receipt-duplicate" role="alert"><strong>Possible duplicate expense</strong><p>{duplicates.map((item) => `${item.merchant} · ${item.date} · ${displayMoney(item.amount)}`).join(' / ')}</p><label><input type="checkbox" checked={approvedDuplicateKey === duplicateKey} onChange={(event) => setApprovedDuplicateKey(event.target.checked ? duplicateKey : '')} /> I checked; this is a separate expense</label></div>}
         <form className="receipt-detail-form" onSubmit={saveReceipt}><h3>Confirmed record</h3><div className="receipt-fields"><label>Merchant or description<input required maxLength="80" value={receiptForm.merchant} onChange={(event) => setReceiptForm({ ...receiptForm, merchant: event.target.value })} /></label><label>Date<input required type="date" value={receiptForm.date} onChange={(event) => setReceiptForm({ ...receiptForm, date: event.target.value })} /></label><label>Amount (PHP)<input required type="number" min="0.01" step="0.01" value={receiptForm.amount} onChange={(event) => setReceiptForm({ ...receiptForm, amount: event.target.value })} /></label><label>Note (optional)<input maxLength="300" value={receiptForm.note} onChange={(event) => setReceiptForm({ ...receiptForm, note: event.target.value })} /></label></div>{editingReceipt && <label>Reason for edit<textarea required rows="2" maxLength="300" value={receiptForm.reason} onChange={(event) => setReceiptForm({ ...receiptForm, reason: event.target.value })} /></label>}<div className="receipt-form-actions"><button className="primary" type="submit" disabled={Boolean(busy) || (!manualMode && !savedBlob) || Boolean(sourceBlob && !savedBlob) || Boolean(duplicates.length && approvedDuplicateKey !== duplicateKey)}>Save {editingReceipt ? 'changes' : 'expense'}</button><button className="secondary" type="button" onClick={() => { stopCamera(); setScanOpen(false) }}>Cancel</button></div></form>
       </div></div></div>, document.body)}
   </div>

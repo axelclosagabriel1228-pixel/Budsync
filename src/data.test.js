@@ -33,10 +33,12 @@ test('CSV export protects note fields from spreadsheet formulas', () => {
 
 test('budgets and savings goals survive backup and require valid references', () => {
   const data = blankData()
+  data.receiptSyncCutoff = '2026-10-24T00:00:00.000Z'
   data.budgets = [{ id: 'food', category: 'Food', limit: 500 }]
   data.goals = [{ id: 'rainy-day', name: 'Rainy day', target: 5000, walletId: 'savings' }]
   const restored = parseBackup(backupJson(data))
   assert.deepEqual(restored.budgets, data.budgets)
   assert.deepEqual(restored.goals, data.goals)
+  assert.equal(restored.receiptSyncCutoff, data.receiptSyncCutoff)
   assert.throws(() => validateData({ ...data, goals: [{ ...data.goals[0], walletId: 'missing' }] }), /invalid savings goal/)
 })

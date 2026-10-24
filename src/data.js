@@ -9,7 +9,7 @@ export const starterWallets = [
 
 export const blankData = () => ({
   version: 2, wallets: starterWallets.map((wallet) => ({ ...wallet, openingBalance: 0 })),
-  entries: [], budgets: [], goals: [], sampleBalances: false, setupComplete: false,
+  entries: [], budgets: [], goals: [], sampleBalances: false, setupComplete: false, receiptSyncCutoff: null,
 })
 
 const validMoney = (amount, allowZero = false) => Number.isFinite(amount)
@@ -92,6 +92,9 @@ export function validateData(input) {
     || (input.budgets?.length || 0) > 100 || (input.goals?.length || 0) > 100) {
     throw new Error('The backup has invalid budgets or savings goals.')
   }
+  if (input.receiptSyncCutoff != null && (typeof input.receiptSyncCutoff !== 'string' || Number.isNaN(Date.parse(input.receiptSyncCutoff)))) {
+    throw new Error('The backup has an invalid receipt sync date.')
+  }
   const budgetIds = new Set()
   const budgetCategories = new Set()
   const budgets = (input.budgets || []).map((budget) => {
@@ -116,7 +119,8 @@ export function validateData(input) {
   })
   if (budgets.length > 100 || goals.length > 100) throw new Error('The backup has too many budgets or savings goals.')
   return { version: 2, wallets, entries, budgets, goals,
-    sampleBalances: Boolean(input.sampleBalances), setupComplete: input.setupComplete !== false }
+    sampleBalances: Boolean(input.sampleBalances), setupComplete: input.setupComplete !== false,
+    receiptSyncCutoff: typeof input.receiptSyncCutoff === 'string' ? input.receiptSyncCutoff : null }
 }
 
 export function parseBackup(text) {

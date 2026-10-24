@@ -25,7 +25,7 @@ Receipt images and folder records save in this device's IndexedDB. Deleting a re
 
 ## Google Drive receipts
 
-Drive access is a separate connection in **Data & account**. When connected, Budsync uploads receipt data and images into `Budsync/<wallet name>/<folder name>/`, using JSON files for folder and receipt details and JPG files for images. Folder names and wallet assignments are updated on Drive. Local deletions move their Drive copies to Trash at the next successful sync. Connecting restores missing local folders and receipts first; **Restore missing receipts** can repeat that step. Restored receipts recreate missing linked wallet expenses. Restore requires matching wallet IDs, usually supplied by signing into the same Budsync account or restoring its JSON backup first. Existing local records are kept when IDs match; review them before uploading from multiple devices. Drive access lasts only until Google's browser token expires, so reconnect to upload pending changes. Keep a local backup before clearing browser data.
+Drive access is a separate connection in **Data & account**. When connected, Budsync uploads receipt data and images into `Budsync/<wallet name>/<folder name>/`, using JSON files for folder and receipt details and JPG files for images. It checks Drive while the app is visible, downloads newer folder and receipt details to each device, and uploads local changes. Deletions leave a marker for other devices and move the old Drive files to Trash. **Sync receipts now** runs both directions; **Download Drive changes** checks Drive without uploading. Receipt expenses are repaired from the local receipt copy if a save was interrupted. A JSON backup restore removes local receipts outside the restored transaction set and prevents older Drive receipts from reappearing. Custom wallets must have matching IDs on the other device, usually by signing into the same Budsync account or restoring its JSON backup first. Drive access lasts only until Google's browser token expires, so reconnect to resume synchronization. Keep a local backup before clearing browser data.
 
 To enable Drive on localhost:
 
@@ -33,7 +33,7 @@ To enable Drive on localhost:
 2. Configure the OAuth consent screen (Google Auth Platform > Branding/Audience/Data Access). Add the `https://www.googleapis.com/auth/drive.file` scope. If the app is in testing mode, add your Google account as a test user.
 3. Create an OAuth **Web application** client under **Clients**. Add `http://localhost:5173` to **Authorized JavaScript origins**. Add your actual Vite origin too if its port differs. This browser token flow needs no redirect URI.
 4. Copy `.env.example` to `.env.local` if needed, set `VITE_GOOGLE_CLIENT_ID` to that Web Client ID, and restart `npm run dev`. Keep your Firebase values if present.
-5. Open **Data & account > Connect Google Drive** and approve access. A `Budsync` folder will be created after the first upload. On another device, load the same wallet records, connect the same Google account, then restore receipts.
+5. Open **Data & account > Connect Google Drive** and approve access. A `Budsync` folder will be created after the first upload. Connect the same Google account on another device to synchronize its local receipt copy.
 
 The `drive.file` permission lets Budsync manage files it creates; the OAuth access token stays in memory. Do not place an OAuth client secret in the browser configuration.
 

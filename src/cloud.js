@@ -57,6 +57,10 @@ export async function applySnapshot(revision, data) {
   const payload = encodeSnapshot(data)
   const result = await runTransaction(snapshotRef(user), (current) => nextSnapshot(current, revision, payload), { applyLocally: false })
   const decoded = decodeSnapshot(result.snapshot.val())
-  if (!decoded) throw new Error('The Firebase snapshot could not be read.')
-  return { applied: result.committed, ...decoded }
+  if (result.committed) {
+    if (!decoded) throw new Error('Firebase confirmed the save but returned no snapshot. Check for updates before editing again.')
+    return { applied: true, ...decoded }
+  }
+  const latest = decoded || await fetchSnapshot()
+  return { applied: false, ...(latest || { revision: 0, data: null }) }
 }

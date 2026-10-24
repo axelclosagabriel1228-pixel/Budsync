@@ -14,6 +14,9 @@ export function decodeSnapshot(value) {
 }
 
 export function nextSnapshot(current, revision, payload) {
+  // Firebase may call the updater with an uncached null before loading existing server data.
+  // Propose the first revision so the server can supply its value and retry the updater.
+  if (current === null) return { revision: 1, payload }
   const actual = Number(current?.revision || 0)
   return actual === revision ? { revision: actual + 1, payload } : undefined
 }

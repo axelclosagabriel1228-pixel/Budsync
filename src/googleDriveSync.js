@@ -1,11 +1,12 @@
 import { createFolder, downloadFile, findRoot, listChildren, trashFile, updateFolder, uploadFile } from './googleDrive.js'
-import { clearDriveDelete, listDriveDeletes, listReceiptFolders, listReceipts, putReceipt, putReceiptFolder } from './receiptStore.js'
+import { clearDriveDelete, listDriveDeletes, listReceiptFolders, listReceipts, putReceipt, putReceiptFolder, removeReceipt, removeReceiptFolder } from './receiptStore.js'
 
 const kind = (file, value) => file.appProperties?.budsyncKind === value
 const idOf = (file) => file.appProperties?.budsyncId
 const stamp = (item) => item.updatedAt || item.createdAt || ''
 const metadata = (item) => JSON.stringify(Object.fromEntries(Object.entries(item).filter(([key]) => !['blob', 'key', 'scope'].includes(key))))
 const match = (files, type, id) => files.find((file) => kind(file, type) && idOf(file) === id)
+const receiptStorage = { listReceiptFolders, listReceipts, listDriveDeletes, putReceipt, putReceiptFolder, removeReceipt, removeReceiptFolder, clearDriveDelete }
 
 async function rootFor(token, scope, create) {
   const existing = await findRoot(token, scope)
@@ -17,12 +18,17 @@ async function inventory(token, root) {
   const top = await listChildren(token, root.id)
   const wallets = top.filter((file) => kind(file, 'wallet'))
   const walletChildren = await Promise.all(wallets.map(async (wallet) => [wallet.id, await listChildren(token, wallet.id)]))
-  return { wallets, children: new Map(walletChildren) }
+  return { top, wallets, children: new Map(walletChildren) }
 }
 
-async function applyDeletes(token, scope, remote) {
-  const deletes = await listDriveDeletes(scope)
+async function applyDeletes(token, scope, remote, storage) {
+  const deletes = await storage.listDriveDeletes(scope)
   for (const item of deletes) {
+    const markerId = `${item.kind}:${item.id}`
+    if (!remote.top.some((file) => kind(file, 'deletion') && idOf(file) === markerId)) {
+      await uploadFile(token, null, remote.rootId, `${item.kind}-${item.id}.deleted.json`, JSON.stringify(item), 'application/json',
+        { budsyncKind: 'deletion', budsyncId: markerId, budsyncRevision: item.deletedAt || new Date().toISOString() })
+    }
     if (item.kind === 'folder') {
       const file = [...remote.children.values()].flat().find((candidate) => match([candidate], 'folder', item.id))
       if (file) await trashFile(token, file.id)
@@ -36,20 +42,36 @@ async function applyDeletes(token, scope, remote) {
         }
       }
     }
-    await clearDriveDelete(scope, item.kind, item.id)
+    await storage.clearDriveDelete(scope, item.kind, item.id)
   }
 }
 
-export async function restoreFromDrive(token, scope, wallets) {
+export async function restoreFromDrive(token, scope, wallets, entryIds = null, storage = receiptStorage, cutoff = null) {
   const root = await rootFor(token, scope, false)
-  if (!root) return { folders: 0, receipts: 0, skipped: 0 }
-  const localFolders = await listReceiptFolders(scope)
-  const localReceipts = await listReceipts(scope)
-  const deletes = await listDriveDeletes(scope)
+  if (!root) return { folders: 0, receipts: 0, skipped: 0, restored: [], deletedEntryIds: [] }
+  const localFolders = await storage.listReceiptFolders(scope)
+  const localReceipts = await storage.listReceipts(scope)
+  const deletes = await storage.listDriveDeletes(scope)
   const deleted = new Set(deletes.map((item) => `${item.kind}:${item.id}`))
-  const knownFolders = new Set(localFolders.map((item) => item.id))
-  const knownReceipts = new Set(localReceipts.map((item) => item.id))
+  const allowed = (receipt) => !entryIds || entryIds.has(receipt.entryId) || (cutoff && receipt.createdAt > cutoff)
+  const folderById = new Map(localFolders.map((item) => [item.id, item]))
+  const receiptById = new Map(localReceipts.map((item) => [item.id, item]))
   const remote = await inventory(token, root)
+  const remoteDeleted = new Set(remote.top.filter((file) => kind(file, 'deletion')).map(idOf))
+  const deletedEntryIds = []
+  for (const receipt of localReceipts) {
+    if (remoteDeleted.has(`receipt:${receipt.id}`) || remoteDeleted.has(`folder:${receipt.folderId}`)) {
+      deletedEntryIds.push(receipt.entryId)
+      await storage.removeReceipt(scope, receipt.id, false)
+      receiptById.delete(receipt.id)
+    }
+  }
+  for (const folder of localFolders) {
+    if (remoteDeleted.has(`folder:${folder.id}`)) {
+      await storage.removeReceiptFolder(scope, folder.id, [], false)
+      folderById.delete(folder.id)
+    }
+  }
   const restored = []
   let folderCount = 0
   let skipped = 0
@@ -57,35 +79,59 @@ export async function restoreFromDrive(token, scope, wallets) {
     const walletId = idOf(wallet)
     if (!wallets.some((item) => item.id === walletId)) { skipped += 1; continue }
     for (const folderFile of (remote.children.get(wallet.id) || []).filter((file) => kind(file, 'folder'))) {
-      if (deleted.has(`folder:${idOf(folderFile)}`)) continue
+      if (deleted.has(`folder:${idOf(folderFile)}`) || remoteDeleted.has(`folder:${idOf(folderFile)}`)) continue
       const files = await listChildren(token, folderFile.id)
       const folderMeta = match(files, 'folderMeta', idOf(folderFile))
       if (!folderMeta) { skipped += 1; continue }
       const folder = JSON.parse(await (await downloadFile(token, folderMeta.id)).text())
       if (!folder.id || folder.walletId !== walletId) { skipped += 1; continue }
-      if (!knownFolders.has(folder.id)) { await putReceiptFolder(scope, folder); knownFolders.add(folder.id); folderCount += 1 }
+      const localFolder = folderById.get(folder.id)
+      if (!localFolder || stamp(folder) > stamp(localFolder)) {
+        await storage.putReceiptFolder(scope, folder)
+        folderById.set(folder.id, folder)
+        folderCount += 1
+      }
+      const currentFolder = folderById.get(folder.id)
+      let hasIncludedReceipt = localReceipts.some((item) => item.folderId === folder.id && allowed(item))
       for (const file of files.filter((item) => kind(item, 'receiptMeta'))) {
-        if (deleted.has(`receipt:${idOf(file)}`) || knownReceipts.has(idOf(file))) continue
+        if (deleted.has(`receipt:${idOf(file)}`) || remoteDeleted.has(`receipt:${idOf(file)}`)) continue
+        const localReceipt = receiptById.get(idOf(file))
+        if (localReceipt && (file.appProperties?.budsyncRevision || '') <= stamp(localReceipt)) {
+          if (allowed(localReceipt)) hasIncludedReceipt = true
+          if (localFolder?.walletId !== currentFolder.walletId && allowed(localReceipt)) restored.push({ receipt: localReceipt, folder: currentFolder })
+          continue
+        }
         const receipt = JSON.parse(await (await downloadFile(token, file.id)).text())
         if (!receipt.id || receipt.folderId !== folder.id || !receipt.entryId || !Number.isFinite(receipt.amount)) { skipped += 1; continue }
+        if (!allowed(receipt)) {
+          if (cutoff) await storage.removeReceipt(scope, receipt.id)
+          continue
+        }
+        hasIncludedReceipt = true
         const image = match(files, 'receiptImage', receipt.id)
         if (image) receipt.blob = await downloadFile(token, image.id)
-        await putReceipt(scope, receipt)
-        knownReceipts.add(receipt.id)
-        restored.push({ receipt, folder })
+        await storage.putReceipt(scope, receipt)
+        receiptById.set(receipt.id, receipt)
+        restored.push({ receipt, folder: currentFolder })
+      }
+      if (cutoff && !hasIncludedReceipt && folder.createdAt <= cutoff) {
+        await storage.removeReceiptFolder(scope, folder.id, [])
+        folderById.delete(folder.id)
       }
     }
   }
-  return { folders: folderCount, receipts: restored.length, skipped, restored }
+  return { folders: folderCount, receipts: restored.length, skipped, restored, deletedEntryIds }
 }
 
-export async function syncToDrive(token, scope, wallets) {
+export async function syncToDrive(token, scope, wallets, storage = receiptStorage) {
   const root = await rootFor(token, scope, true)
   const remote = await inventory(token, root)
-  await applyDeletes(token, scope, remote)
-  const localFolders = await listReceiptFolders(scope)
-  const localReceipts = await listReceipts(scope)
+  remote.rootId = root.id
+  await applyDeletes(token, scope, remote, storage)
+  const localFolders = await storage.listReceiptFolders(scope)
+  const localReceipts = await storage.listReceipts(scope)
   let uploaded = 0
+  const syncedReceipts = []
   for (const wallet of wallets) {
     const folders = localFolders.filter((item) => item.walletId === wallet.id)
     if (!folders.length) continue
@@ -121,8 +167,9 @@ export async function syncToDrive(token, scope, wallets) {
             { budsyncKind: 'receiptImage', budsyncId: receipt.id, budsyncRevision: stamp(receipt) })
           uploaded += 1
         } else if (!receipt.blob && oldImage) await trashFile(token, oldImage.id)
+        syncedReceipts.push({ id: receipt.id, revision: stamp(receipt) })
       }
     }
   }
-  return { uploaded }
+  return { uploaded, syncedReceipts }
 }
